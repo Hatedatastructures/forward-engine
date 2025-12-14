@@ -10,7 +10,7 @@ int main()
     headers.set("Content-Type", "text/plain");
     std::cout << headers.size() << std::endl;
 
-    for (auto &header : headers)
+    for (const auto &header : headers)
     {
         std::cout << header.key.value() << " " << header.value << std::endl;
     }

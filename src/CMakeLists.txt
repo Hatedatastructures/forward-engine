@@ -2,6 +2,7 @@
 set(FORWARD_LIB_SOURCES
         forward-engine/http/header.cpp
         forward-engine/http/request.cpp
+        forward-engine/log/monitor.cpp
 )
 
 # 创建静态库
@@ -10,6 +11,8 @@ add_library(${PROJECT_NAME}_lib STATIC
         ../include/forward-engine/core/agent.hpp
         ../include/forward-engine/http/header.hpp
         ../include/forward-engine/http/request.hpp
+        ../include/forward-engine/http/constants.hpp
+        ../include/forward-engine/log/monitor.hpp
 )
 
 # 设置目标属性
@@ -18,6 +21,7 @@ target_include_directories(${PROJECT_NAME}_lib
         ${CMAKE_CURRENT_SOURCE_DIR}
         ../include/forward-engine/core
         ../include/forward-engine/http
+        ../include/forward-engine/log
 )
 
 # 链接依赖
@@ -25,6 +29,7 @@ target_link_libraries(${PROJECT_NAME}_lib
         PUBLIC
         async_simple::async_simple
         Boost::system
+        ws2_32
 )
 
 # 创建可执行程序

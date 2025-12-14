@@ -7,6 +7,11 @@
 
 namespace ngx::http
 {
+    /**
+     * @brief 小写字符串类
+     * @details 该类用于存储和操作小写字符串。
+     * 它将输入的字符串自动转换为小写，并提供了比较和哈希函数。
+     */
     class downcase_string
     {
     public:
@@ -35,6 +40,12 @@ namespace ngx::http
     }; // class downcase_string
 
 
+    /**
+     * @brief 头字段容器类
+     * @details 该类用于存储 HTTP 请求或响应的头信息。
+     * 每个头信息都由一个键值对组成，键为 downcase_string 类型，值为 std::string 类型。
+     * 头信息的键在存储时会被转换为小写，以方便比较和查找。
+     */
     class headers
     {
     public:
@@ -68,6 +79,7 @@ namespace ngx::http
 
         void set(const std::string_view name, const std::string_view value);
         bool erase(const std::string_view name);
+        bool erase(const std::string_view name, const std::string_view value);
 
         [[nodiscard]] bool contains(const std::string_view name) const noexcept;
         [[nodiscard]] std::string_view retrieve(const std::string_view name) const noexcept;

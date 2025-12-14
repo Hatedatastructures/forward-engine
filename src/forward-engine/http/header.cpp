@@ -135,12 +135,6 @@ namespace ngx::http
         }
     }
 
-    /**
-     * @brief 删除 headers 容器元素
-     * @param name 原始字符串键
-     * @return true 成功删除元素
-     * @return false 未找到元素
-     */
     bool headers::erase(std::string_view name)
     {
         if (entries_.empty())
@@ -151,7 +145,25 @@ namespace ngx::http
         downcase_string key = make_key(name);
         const auto old_size = entries_.size();
 
-        std::erase_if(entries_,[&](const header &entry) {return entry.key == key;} );
+        std::erase_if(entries_, [&](const header &entry) { return entry.key == key; });
+
+        return entries_.size() != old_size;
+    }
+
+    bool headers::erase(const std::string_view name, const std::string_view value)
+    {
+        if (entries_.empty())
+        {
+            return false;
+        }
+
+        downcase_string key = make_key(name);
+        const auto old_size = entries_.size();
+
+        std::erase_if(entries_, [&](const header &entry)
+        {
+            return entry.key == key && entry.value == value;
+        });
 
         return entries_.size() != old_size;
     }
@@ -194,7 +206,7 @@ namespace ngx::http
             return {};
         }
 
-        downcase_string key = make_key(name);
+        const downcase_string key = make_key(name);
 
         for (const auto &entry : entries_)
         {
