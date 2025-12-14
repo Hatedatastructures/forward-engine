@@ -1,0 +1,83 @@
+#pragma once
+#include <string>
+#include <string_view>
+#include <vector>
+#include <ranges>
+#include <algorithm>
+
+namespace ngx::http
+{
+    class downcase_string
+    {
+    public:
+        downcase_string() = default;
+        explicit downcase_string(std::string_view str);
+
+        downcase_string(const downcase_string &other) = default;
+        downcase_string &operator=(const downcase_string &other) = default;
+
+        ~downcase_string() = default;
+        bool operator==(const downcase_string &other) const;
+
+        [[nodiscard]] const std::string& value() const;
+        [[nodiscard]] std::string_view view() const;
+
+        struct hash
+        {
+            std::size_t operator()(const downcase_string &str) const
+            {
+                return std::hash<std::string>{}(str.value());
+            }
+        };
+
+    private:
+        std::string str_;
+    }; // class downcase_string
+
+
+    class headers
+    {
+    public:
+        struct header
+        {
+            downcase_string key;
+            std::string value;
+            std::string original_key;
+
+            header() = default;
+            header(std::string_view name, std::string_view value);
+        }; // struct header
+
+        using size_type = std::size_t;
+        using container_type = std::vector<header>;
+        using iterator = container_type::const_iterator;
+
+        headers() = default;
+        headers(const headers &other) = default;
+        headers &operator=(const headers &other) = default;
+        ~headers() = default;
+
+        void clear() noexcept;
+        void reserve(size_type count);
+
+        [[nodiscard]] size_type size() const noexcept;
+        [[nodiscard]] bool empty() const noexcept;
+
+        void construct(const std::string_view name, const std::string_view value);
+        void construct(const header &entry);
+
+        void set(const std::string_view name, const std::string_view value);
+        bool erase(const std::string_view name);
+
+        [[nodiscard]] bool contains(const std::string_view name) const noexcept;
+        [[nodiscard]] std::string_view retrieve(const std::string_view name) const noexcept;
+
+        iterator begin() const;
+        iterator end() const;
+
+    private:
+        static downcase_string make_key(const std::string_view name);
+
+        container_type entries_;
+    }; // class headers
+}
