@@ -285,6 +285,7 @@ namespace ngx::log
         level file_level_threshold = level::debug;
         level console_level_threshold = level::debug;
         std::size_t max_file_size = 10 * 1024 * 1024; // 10MB
+
     private:
 
         /**

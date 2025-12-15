@@ -3,34 +3,33 @@
 #include <string>
 #include <string_view>
 #include <cstdint>
-#include <constants.hpp>
 #include <header.hpp>
+#include <constants.hpp>
 
 namespace ngx::http
 {
     /**
-     * @brief HTTP 请求容器
-     * @details 该容器用于存储 HTTP 请求的相关信息，包括请求方法、目标 URI、版本号、头字段和请求体。
+     * @brief HTTP 响应容器
+     * @details 该类用于表示 HTTP 响应容器，包含响应状态码、原因短语、版本号、头字段和体内容等。
      */
-    class request
+    class response
     {
     public:
-        request() = default;
-        request(const request &other) = default;
-        request &operator=(const request &other) = default;
-        ~request() = default;
+        response() = default;
+        response(const response &other) = default;
+        response &operator=(const response &other) = default;
+        ~response() = default;
 
-        void method(verb method);
-        [[nodiscard]] verb method() const noexcept;
-        void method(std::string_view method);
-        [[nodiscard]] std::string_view method_string() const noexcept;
+        void status(enum status code) noexcept;
+        [[nodiscard]] enum status status() const noexcept;
+        void status(unsigned int code);
+        [[nodiscard]] unsigned int status_code() const noexcept;
 
-        void target(std::string_view target);
-        [[nodiscard]] const std::string &target() const noexcept;
+        void reason(std::string_view reason);
+        [[nodiscard]] std::string_view reason() const noexcept;
 
         void version(unsigned int value);
         [[nodiscard]] unsigned int version() const noexcept;
-
 
         bool set(std::string_view name, std::string_view value) noexcept;
         bool set(field name, std::string_view value) noexcept;
@@ -54,9 +53,8 @@ namespace ngx::http
         [[nodiscard]] headers &header() noexcept;
 
     private:
-        verb method_{verb::get};
-        std::string method_string_;
-        std::string target_;
+        enum status status_{status::ok};
+        std::string reason_;
         std::string body_;
         headers headers_;
         unsigned int version_{11};

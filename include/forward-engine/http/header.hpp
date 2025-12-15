@@ -32,8 +32,8 @@ namespace ngx::http
             std::size_t operator()(const downcase_string &str) const
             {
                 return std::hash<std::string>{}(str.value());
-            }
-        };
+            } 
+        }; // struct hash
 
     private:
         std::string str_;
@@ -74,21 +74,21 @@ namespace ngx::http
         [[nodiscard]] size_type size() const noexcept;
         [[nodiscard]] bool empty() const noexcept;
 
-        void construct(const std::string_view name, const std::string_view value);
+        void construct(std::string_view name, std::string_view value);
         void construct(const header &entry);
 
-        void set(const std::string_view name, const std::string_view value);
-        bool erase(const std::string_view name);
-        bool erase(const std::string_view name, const std::string_view value);
+        void set(std::string_view name, std::string_view value);
+        bool erase(std::string_view name);
+        bool erase(std::string_view name, std::string_view value);
 
-        [[nodiscard]] bool contains(const std::string_view name) const noexcept;
-        [[nodiscard]] std::string_view retrieve(const std::string_view name) const noexcept;
+        [[nodiscard]] bool contains(std::string_view name) const noexcept;
+        [[nodiscard]] std::string_view retrieve(std::string_view name) const noexcept;
 
-        iterator begin() const;
-        iterator end() const;
+        [[nodiscard]] iterator begin() const;
+        [[nodiscard]] iterator end() const;
 
     private:
-        static downcase_string make_key(const std::string_view name);
+        static downcase_string make_key(std::string_view name);
 
         container_type entries_;
     }; // class headers

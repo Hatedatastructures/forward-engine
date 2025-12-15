@@ -3,6 +3,12 @@ set(FORWARD_LIB_SOURCES
         forward-engine/http/header.cpp
         forward-engine/http/request.cpp
         forward-engine/log/monitor.cpp
+        ../include/forward-engine/http/response.hpp
+        forward-engine/http/response.cpp
+        ../include/forward-engine/http/serialization.hpp
+        forward-engine/http/serialization.cpp
+        ../include/forward-engine/http/deserialization.hpp
+        forward-engine/http/deserialization.cpp
 )
 
 # 创建静态库
@@ -13,6 +19,12 @@ add_library(${PROJECT_NAME}_lib STATIC
         ../include/forward-engine/http/request.hpp
         ../include/forward-engine/http/constants.hpp
         ../include/forward-engine/log/monitor.hpp
+        ../include/forward-engine/http/response.hpp
+        forward-engine/http/response.cpp
+        ../include/forward-engine/http/serialization.hpp
+        forward-engine/http/serialization.cpp
+        ../include/forward-engine/http/deserialization.hpp
+        forward-engine/http/deserialization.cpp
 )
 
 # 设置目标属性
@@ -35,6 +47,12 @@ target_link_libraries(${PROJECT_NAME}_lib
 # 创建可执行程序
 add_executable(${PROJECT_NAME}
         main.cpp
+        ../include/forward-engine/http/response.hpp
+        forward-engine/http/response.cpp
+        ../include/forward-engine/http/serialization.hpp
+        forward-engine/http/serialization.cpp
+        ../include/forward-engine/http/deserialization.hpp
+        forward-engine/http/deserialization.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}
