@@ -9,12 +9,16 @@ set(FORWARD_LIB_SOURCES
         forward-engine/http/serialization.cpp
         ../include/forward-engine/http/deserialization.hpp
         forward-engine/http/deserialization.cpp
+        ../include/forward-engine/agent/positive.hpp
+        ../include/forward-engine/agent/reverse.hpp
+        ../include/forward-engine/http.hpp
+        forward-engine/agent/positive.cpp
+        forward-engine/agent/reverse.cpp
 )
 
 # 创建静态库
-add_library(${PROJECT_NAME}_lib STATIC
+add_library(${PROJECT_NAME}_static_library STATIC
         ${FORWARD_LIB_SOURCES}
-        ../include/forward-engine/core/agent.hpp
         ../include/forward-engine/http/header.hpp
         ../include/forward-engine/http/request.hpp
         ../include/forward-engine/http/constants.hpp
@@ -25,19 +29,22 @@ add_library(${PROJECT_NAME}_lib STATIC
         forward-engine/http/serialization.cpp
         ../include/forward-engine/http/deserialization.hpp
         forward-engine/http/deserialization.cpp
+        ../include/forward-engine/agent/positive.hpp
+        ../include/forward-engine/agent/reverse.hpp
+        ../include/forward-engine/http.hpp
+        forward-engine/agent/positive.cpp
+        forward-engine/agent/reverse.cpp
 )
 
 # 设置目标属性
-target_include_directories(${PROJECT_NAME}_lib
+target_include_directories(${PROJECT_NAME}_static_library
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ../include/forward-engine/core
-        ../include/forward-engine/http
-        ../include/forward-engine/log
+        ../include/forward-engine
 )
 
 # 链接依赖
-target_link_libraries(${PROJECT_NAME}_lib
+target_link_libraries(${PROJECT_NAME}_static_library
         PUBLIC
         async_simple::async_simple
         Boost::system
@@ -53,9 +60,14 @@ add_executable(${PROJECT_NAME}
         forward-engine/http/serialization.cpp
         ../include/forward-engine/http/deserialization.hpp
         forward-engine/http/deserialization.cpp
+        ../include/forward-engine/agent/positive.hpp
+        ../include/forward-engine/agent/reverse.hpp
+        ../include/forward-engine/http.hpp
+        forward-engine/agent/positive.cpp
+        forward-engine/agent/reverse.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}
         PRIVATE
-        ${PROJECT_NAME}_lib
+        ${PROJECT_NAME}_static_library
 )

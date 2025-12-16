@@ -1,4 +1,4 @@
-﻿#include <response.hpp>
+﻿#include <http/response.hpp>
 #include <charconv>
 
 namespace ngx::http
@@ -454,7 +454,7 @@ namespace ngx::http
      * @details 该函数用于获取 HTTP 响应的头字段容器，用于直接访问和操作头字段。
      * @return 响应头字段容器引用
      */
-    headers &response::header() noexcept
+    const headers &response::header() const noexcept
     {
         return headers_;
     }

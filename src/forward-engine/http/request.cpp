@@ -1,4 +1,5 @@
-#include <request.hpp>
+#include <http/constants.hpp>
+#include <http/request.hpp>
 #include <charconv>
 
 namespace ngx::http
@@ -377,9 +378,9 @@ namespace ngx::http
     /**
      * @brief 获取请求头字段
      * @details 该函数用于获取 HTTP 请求的头字段
-     * @return 请求头字段对象引用
+     * @return 请求头字段对象常量引用
      */
-    headers &request::header() noexcept
+    const headers &request::header() const noexcept
     {
         return headers_;
     }

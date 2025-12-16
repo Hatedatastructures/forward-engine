@@ -3,8 +3,8 @@
 #include <string>
 #include <string_view>
 #include <cstdint>
-#include <header.hpp>
-#include <constants.hpp>
+#include "header.hpp"
+#include "constants.hpp"
 
 namespace ngx::http
 {
@@ -50,7 +50,7 @@ namespace ngx::http
         void clear();
         void keep_alive(bool value) noexcept;
         [[nodiscard]] bool empty() const noexcept;
-        [[nodiscard]] headers &header() noexcept;
+        [[nodiscard]] const headers &header() const noexcept;
 
     private:
         enum status status_{status::ok};

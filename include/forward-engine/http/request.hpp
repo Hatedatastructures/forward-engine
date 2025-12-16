@@ -3,8 +3,8 @@
 #include <string>
 #include <string_view>
 #include <cstdint>
-#include <constants.hpp>
-#include <header.hpp>
+#include "constants.hpp"
+#include "header.hpp"
 
 namespace ngx::http
 {
@@ -51,7 +51,7 @@ namespace ngx::http
         void clear();
         void keep_alive(bool value) noexcept;
         [[nodiscard]] bool empty() const noexcept;
-        [[nodiscard]] headers &header() noexcept;
+        [[nodiscard]] const headers &header() const noexcept;
 
     private:
         verb method_{verb::get};
