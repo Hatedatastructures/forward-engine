@@ -14,6 +14,8 @@ set(FORWARD_LIB_SOURCES
         ../include/forward-engine/http.hpp
         forward-engine/agent/positive.cpp
         forward-engine/agent/reverse.cpp
+        ../include/forward-engine/agent/obscura.hpp
+        forward-engine/agent/obscura.cpp
 )
 
 # 创建静态库
@@ -34,6 +36,8 @@ add_library(${PROJECT_NAME}_static_library STATIC
         ../include/forward-engine/http.hpp
         forward-engine/agent/positive.cpp
         forward-engine/agent/reverse.cpp
+        ../include/forward-engine/agent/obscura.hpp
+        forward-engine/agent/obscura.cpp
 )
 
 # 设置目标属性
@@ -65,6 +69,8 @@ add_executable(${PROJECT_NAME}
         ../include/forward-engine/http.hpp
         forward-engine/agent/positive.cpp
         forward-engine/agent/reverse.cpp
+        ../include/forward-engine/agent/obscura.hpp
+        forward-engine/agent/obscura.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}

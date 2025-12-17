@@ -12,7 +12,31 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # 依赖管理
 list(APPEND CMAKE_PREFIX_PATH "c:/bin")
 find_package(async_simple CONFIG REQUIRED)
-find_package(Boost REQUIRED COMPONENTS system)
+
+find_package(Boost QUIET COMPONENTS system)
+if(NOT TARGET Boost::system)
+    set(Boost_NO_BOOST_CMAKE ON)
+    find_package(Boost QUIET COMPONENTS system)
+endif()
+
+if(NOT TARGET Boost::system)
+    find_path(boost_include_dir
+            NAMES boost/system/error_code.hpp
+            HINTS
+            "c:/bin/include"
+            "c:/bin"
+            PATH_SUFFIXES include
+    )
+
+    if(NOT boost_include_dir)
+        message(FATAL_ERROR "找不到 `boost` 头文件目录，无法继续构建")
+    endif()
+
+    add_library(boost_system_header_only INTERFACE)
+    target_include_directories(boost_system_header_only INTERFACE ${boost_include_dir})
+    target_compile_definitions(boost_system_header_only INTERFACE BOOST_ERROR_CODE_HEADER_ONLY BOOST_SYSTEM_NO_LIB)
+    add_library(Boost::system ALIAS boost_system_header_only)
+endif()
 
 enable_testing()
 

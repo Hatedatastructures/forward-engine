@@ -6,10 +6,15 @@
 
 #include <http/serialization.hpp>
 #include <http/deserialization.hpp>
+#include <agent/obscura.hpp>
 #include <iostream>
+#include <string>
 
 
 namespace http = ngx::http;
+namespace agent = ngx::agent;
+
+bool camouflage_roundtrip();
 
 void serialization()
 {
@@ -84,5 +89,7 @@ int main()
 {
     // serialization();
     deserialization();
+
     return 0;
 }
+

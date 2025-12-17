@@ -1,0 +1,9 @@
+{
+    "agent": {
+        "positive": {
+            "host": "localhost",
+            "port": 8080
+        },
+        "camouflage": "/api/notification/v1/stream?id=abcd-1234"
+    }
+}
