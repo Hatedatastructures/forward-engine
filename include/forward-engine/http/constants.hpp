@@ -390,7 +390,7 @@ namespace ngx::http
      * @brief HTTP 请求方法枚举
      * @note 每个枚举值对应 HTTP 请求报文中使用的方法字符串
      */
-    enum class verb
+    enum class verb 
     {
         /**
          * @brief unknown

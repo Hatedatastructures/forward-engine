@@ -1,3 +1,8 @@
+# 查找 OpenSSL
+find_package(OpenSSL REQUIRED)
+message(STATUS "OpenSSL Include: ${OPENSSL_INCLUDE_DIR}")
+message(STATUS "OpenSSL Libs: ${OPENSSL_LIBRARIES}")
+
 # 收集库源文件
 set(FORWARD_LIB_SOURCES
         forward-engine/http/header.cpp
@@ -15,7 +20,9 @@ set(FORWARD_LIB_SOURCES
         forward-engine/agent/positive.cpp
         forward-engine/agent/reverse.cpp
         ../include/forward-engine/agent/obscura.hpp
-        forward-engine/agent/obscura.cpp
+        ../include/forward-engine/agent/frame.hpp
+        forward-engine/agent/frame.cpp
+        ../include/forward-engine/limit/blacklist.hpp
 )
 
 # 创建静态库
@@ -37,7 +44,9 @@ add_library(${PROJECT_NAME}_static_library STATIC
         forward-engine/agent/positive.cpp
         forward-engine/agent/reverse.cpp
         ../include/forward-engine/agent/obscura.hpp
-        forward-engine/agent/obscura.cpp
+        ../include/forward-engine/agent/frame.hpp
+        forward-engine/agent/frame.cpp
+        ../include/forward-engine/limit/blacklist.hpp
 )
 
 # 设置目标属性
@@ -52,8 +61,12 @@ target_link_libraries(${PROJECT_NAME}_static_library
         PUBLIC
         async_simple::async_simple
         Boost::system
+        ${OPENSSL_LIBRARIES}
         ws2_32
+        mswsock
+        crypt32
 )
+target_include_directories(${PROJECT_NAME}_static_library PUBLIC ${OPENSSL_INCLUDE_DIR})
 
 # 创建可执行程序
 add_executable(${PROJECT_NAME}
@@ -70,7 +83,9 @@ add_executable(${PROJECT_NAME}
         forward-engine/agent/positive.cpp
         forward-engine/agent/reverse.cpp
         ../include/forward-engine/agent/obscura.hpp
-        forward-engine/agent/obscura.cpp
+        ../include/forward-engine/agent/frame.hpp
+        forward-engine/agent/frame.cpp
+        ../include/forward-engine/limit/blacklist.hpp
 )
 
 target_link_libraries(${PROJECT_NAME}

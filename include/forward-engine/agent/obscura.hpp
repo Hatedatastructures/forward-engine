@@ -4,15 +4,17 @@
 #include <boost/asio.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/beast.hpp>
+#include <boost/beast/websocket/ssl.hpp>
+
+// 伪装层
+
 
 namespace ngx::agent
 {
     namespace net = boost::asio;
     namespace ssl = boost::asio::ssl;
     namespace beast = boost::beast;
-    namespace bhttp = boost::beast::http;
     namespace websocket = beast::websocket;
-    using tcp = boost::asio::ip::tcp;
 
     /**
      * @brief awaitable 概念
@@ -63,6 +65,27 @@ namespace ngx::agent
        requires socket_concept<typename protocol_type::socket>;
     };
 
+    /**
+     * @brief 角色枚举
+     * @note 角色枚举用于指定 obscura 实例的角色，分为 client 和 server 两种模式。
+     */
+    enum class role
+    {
+        /**
+         * @brief 客户端角色
+         */
+        client,
+        /**
+         * @brief 服务端角色
+         */
+        server
+    };
+
+    /**
+     * @brief 暗箱容器
+     * @tparam protocol_type 协议类型
+     * @note obscura 暗箱容器用于实现建立伪装流量的暗箱通道，支持 client 和 server 两种模式
+     */
     template <protocol_concept protocol>
     class obscura : public std::enable_shared_from_this<obscura<protocol>>
     {
@@ -70,33 +93,108 @@ namespace ngx::agent
     public:
         using socket_type = typename protocol::socket;
 
-        obscura(socket_type socket, net::ssl::context &ssl_context);
+        /**
+         * @brief 构造函数
+         * @param socket 原始 socket
+         * @param ssl_context SSL 上下文（共享所有权）
+         * @param r 角色
+         */
+        obscura(socket_type socket, std::shared_ptr<net::ssl::context> ssl_context, role r = role::server);
         obscura(const obscura&) = delete;
         obscura& operator=(const obscura&) = delete;
 
-        net::awaitable<void> handshake(beast::flat_buffer& buffer, ssl_request& req);
+        net::awaitable<std::string> handshake(std::string_view host = "", std::string_view path = "/");
+
+        // 读取数据到外部缓冲区，返回读取字节数
+        net::awaitable<std::size_t> async_read(beast::flat_buffer& buffer);
+        net::awaitable<void> async_write(std::string_view data);
+
+        net::awaitable<void> close()
+        {
+            co_await wsocket.async_close(websocket::close_code::normal, net::use_awaitable);
+        }
+
     private:
-        ssl::context &ssl_context;
+        role role_;
+        std::shared_ptr<ssl::context> ssl_context_;
         ssl::stream<socket_type> ssl_stream;
         websocket::stream<ssl::stream<socket_type>&> wsocket{ssl_stream};
     }; // class obscura
 
     template <protocol_concept protocol>
-    obscura<protocol>::obscura(socket_type socket, net::ssl::context &ssl_context)
-        : ssl_stream(std::move(socket), ssl_context), wsocket(ssl_stream)
-    {}
+    obscura<protocol>::obscura(socket_type socket, std::shared_ptr<net::ssl::context> context, role r)
+    : role_(r), ssl_context_(std::move(context)), ssl_stream(std::move(socket), *ssl_context_), wsocket(ssl_stream)
+    {
+        wsocket.binary(true);
+    }
 
     /**
      * @brief 握手
-     * @param buffer 缓冲区
-     * @param req_parser 请求解析器
-     * @note  坑 ：流量特征
+     * @param host 目标主机（仅 Client 模式需要，Server 模式忽略）
+     * @param path 请求路径（仅 Client 模式需要，Server 模式忽略）
+     * @return std::string 对于 Server 模式，返回请求的目标路径；对于 Client 模式，返回空串。
      */
     template <protocol_concept protocol>
-    net::awaitable<void> obscura<protocol>::handshake(beast::flat_buffer& buffer, ssl_request& req)
+    net::awaitable<std::string> obscura<protocol>::handshake(std::string_view host, std::string_view path)
     {
-        // 先进行 SSL 握手，前提是设置证书，这个先进行非对称加密得到公钥和私钥 协商 对称加密算法 再进行对称加密
-        co_await ssl_stream.async_handshake(ssl::stream_base::server,net::use_awaitable);
-        co_await beast::http::async_read(ssl_stream, buffer, req, net::use_awaitable);
+        if (role_ == role::server)
+        {
+            // Server 模式：SSL 握手 -> 接收 HTTP -> 升级 WebSocket
+            co_await ssl_stream.async_handshake(ssl::stream_base::server, net::use_awaitable);
+            
+            beast::flat_buffer buffer;
+            beast::http::request<beast::http::string_body> req;
+            co_await beast::http::async_read(ssl_stream, buffer, req, net::use_awaitable);
+
+            // 传递 buffer 以处理预读数据，Beast 会消耗掉它
+            co_await wsocket.async_accept(req, net::use_awaitable);
+            
+            co_return std::string(req.target());
+        }
+        else
+        {
+            // Client 模式：SSL 握手 -> 发送 HTTP -> 升级 WebSocket
+            
+            // 如果提供了 host，可以设置 SNI (Server Name Indication)
+            if (!host.empty())
+            {
+                if(!SSL_set_tlsext_host_name(ssl_stream.native_handle(), std::string(host).c_str()))
+                {
+                    // SNI 设置失败通常不是致命的，但为了健壮性可以记录或抛出
+                    // 这里暂时忽略，继续握手
+                }
+            }
+
+            co_await ssl_stream.async_handshake(ssl::stream_base::client, net::use_awaitable);
+            
+            std::string h = host.empty() ? "localhost" : std::string(host);
+            co_await wsocket.async_handshake(h, path, net::use_awaitable);
+            
+            co_return "";
+        }
+    }
+
+    /**
+     * @brief 读取数据
+     * @param buffer 外部缓冲区
+     * @return std::size_t 读取到的字节数
+     */
+    template <protocol_concept protocol>
+    net::awaitable<std::size_t> obscura<protocol>::async_read(beast::flat_buffer& buffer)
+    {
+        // 直接读取到外部 buffer
+        // 之前这里的 buffer_ 逻辑已移除，因为 handshake 中的 buffer 是局部的，不会有残留问题
+        std::size_t n = co_await wsocket.async_read(buffer, net::use_awaitable);
+        co_return n;
+    }
+
+    /**
+     * @brief 写入数据
+     * @param data 要写入的数据
+     */
+    template <protocol_concept protocol>
+    net::awaitable<void> obscura<protocol>::async_write(std::string_view data)
+    {
+        co_await wsocket.async_write(net::buffer(data), net::use_awaitable);
     }
 } // namespace ngx::agent

@@ -4,6 +4,14 @@
             "host": "localhost",
             "port": 8080
         },
-        "camouflage": "/api/notification/v1/stream?id=abcd-1234"
+        "camouflage": "/api/notification/v1/stream?id=abcd-1234",
+        "user": {
+            "concurrencies": 20,
+            "blacklist": true
+        },
+        "addresspool": {
+            "host": "localhost",
+            "port": 8081
+        }
     }
 }

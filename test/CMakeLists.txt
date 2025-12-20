@@ -35,3 +35,15 @@ target_link_libraries(log_test
 )
 
 add_test(NAME log_test COMMAND log_test)
+
+# obscura 测试可执行程序
+add_executable(obscura_test
+        obscura.cpp
+)
+
+target_link_libraries(obscura_test
+        PRIVATE
+        ${PROJECT_NAME}_static_library
+)
+
+add_test(NAME obscura_test COMMAND obscura_test)
