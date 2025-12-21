@@ -36,6 +36,22 @@ target_link_libraries(log_test
 
 add_test(NAME log_test COMMAND log_test)
 
+# session 测试可执行程序
+add_executable(session_test
+        session.cpp
+)
+
+target_link_libraries(session_test
+        PRIVATE
+        ${PROJECT_NAME}_static_library
+        Boost::system
+        ws2_32
+        mswsock
+        crypt32
+)
+
+add_test(NAME session_test COMMAND session_test)
+
 # obscura 测试可执行程序
 add_executable(obscura_test
         obscura.cpp
@@ -44,6 +60,12 @@ add_executable(obscura_test
 target_link_libraries(obscura_test
         PRIVATE
         ${PROJECT_NAME}_static_library
+        async_simple::async_simple
+        Boost::system
+        ${OPENSSL_LIBRARIES}
+        ws2_32
+        mswsock
+        crypt32
 )
 
 add_test(NAME obscura_test COMMAND obscura_test)

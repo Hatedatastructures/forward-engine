@@ -83,7 +83,7 @@ namespace ngx::agent
 
     /**
      * @brief 暗箱容器
-     * @tparam protocol_type 协议类型
+     * @tparam protocol_concept 协议类型
      * @note obscura 暗箱容器用于实现建立伪装流量的暗箱通道，支持 client 和 server 两种模式
      */
     template <protocol_concept protocol>

@@ -6,10 +6,10 @@
         },
         "camouflage": "/api/notification/v1/stream?id=abcd-1234",
         "user": {
-            "concurrencies": 20,
+            "concurrences": 20,
             "blacklist": true
         },
-        "addresspool": {
+        "addressable": {
             "host": "localhost",
             "port": 8081
         }

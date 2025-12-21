@@ -41,6 +41,7 @@ namespace ngx::log
             std::size_t current_size = 0;
         };
     public:
+        coroutine_log() = default;
         explicit coroutine_log(const asio::any_io_executor& executor);
 
         /**
@@ -269,7 +270,7 @@ namespace ngx::log
         auto console_write_fmt(const level log_level, const std::string& format, Args&&... args) const
         -> asio::awaitable<std::size_t>
         {
-            std::string data = std::vformat(format, std::make_format_args(std::forward<Args>(args)...));
+            std::string data = std::vformat(format, std::make_format_args(args...));
             co_return co_await console_write(log_level, data);
         }
 

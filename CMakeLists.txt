@@ -32,10 +32,9 @@ if(NOT TARGET Boost::system)
         message(FATAL_ERROR "找不到 `boost` 头文件目录，无法继续构建")
     endif()
 
-    add_library(boost_system_header_only INTERFACE
-            include/forward-engine/agent/frame.hpp
-            src/forward-engine/agent/frame.cpp
-            include/forward-engine/limit/blacklist.hpp)
+    message(STATUS "Boost Include Dir: ${boost_include_dir}")
+
+    add_library(boost_system_header_only INTERFACE)
     target_include_directories(boost_system_header_only INTERFACE ${boost_include_dir})
     target_compile_definitions(boost_system_header_only INTERFACE BOOST_ERROR_CODE_HEADER_ONLY BOOST_SYSTEM_NO_LIB)
     add_library(Boost::system ALIAS boost_system_header_only)

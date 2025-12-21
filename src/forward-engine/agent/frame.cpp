@@ -66,8 +66,8 @@ namespace ngx::agent
         std::memcpy(&net_id, string_value.data(), sizeof(uint32_t));
         uint32_t id = boost::endian::big_to_native(net_id);
 
-        uint8_t raw_type = static_cast<uint8_t>(string_value[4]);
-        auto type = static_cast<enum frame::type>(raw_type);
+        auto raw_type = static_cast<uint8_t>(string_value[4]);
+        const auto type = static_cast<enum frame::type>(raw_type);
 
         std::string_view payload(string_value.data() + 5, string_value.size() - 5);
 

@@ -23,6 +23,8 @@ set(FORWARD_LIB_SOURCES
         ../include/forward-engine/agent/frame.hpp
         forward-engine/agent/frame.cpp
         ../include/forward-engine/limit/blacklist.hpp
+        ../include/forward-engine/agent/distributor.hpp
+        ../include/forward-engine/agent/session.hpp
 )
 
 # 创建静态库
@@ -47,13 +49,17 @@ add_library(${PROJECT_NAME}_static_library STATIC
         ../include/forward-engine/agent/frame.hpp
         forward-engine/agent/frame.cpp
         ../include/forward-engine/limit/blacklist.hpp
+        ../include/forward-engine/agent/session.hpp
+        ../include/forward-engine/agent/distributor.hpp
 )
 
 # 设置目标属性
 target_include_directories(${PROJECT_NAME}_static_library
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ../include/forward-engine
+        ${CMAKE_SOURCE_DIR}/include/forward-engine
+        ${boost_include_dir}
+        ${Boost_INCLUDE_DIRS}
 )
 
 # 链接依赖
@@ -86,6 +92,8 @@ add_executable(${PROJECT_NAME}
         ../include/forward-engine/agent/frame.hpp
         forward-engine/agent/frame.cpp
         ../include/forward-engine/limit/blacklist.hpp
+        ../include/forward-engine/agent/distributor.hpp
+        ../include/forward-engine/agent/session.hpp
 )
 
 target_link_libraries(${PROJECT_NAME}

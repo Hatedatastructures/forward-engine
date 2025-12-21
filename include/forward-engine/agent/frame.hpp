@@ -6,6 +6,10 @@
 
 namespace ngx::agent
 {
+    /**
+     * @brief `websocket` 帧容器
+     * @note `websocket` 帧是 `websocket` 协议的基本单位，用于在客户端和服务端之间传输数据
+     */
     class frame
     {
     public:
@@ -28,7 +32,7 @@ namespace ngx::agent
         std::uint32_t stream_id_;
         enum type type_;
         std::string data_;
-    };
+    }; // class frame
 
     [[nodiscard]] std::string serialize(const frame &frame_instance);
 

@@ -14,7 +14,7 @@
 namespace http = ngx::http;
 namespace agent = ngx::agent;
 
-bool camouflage_roundtrip();
+
 
 void serialization()
 {
@@ -84,12 +84,11 @@ void deserialization()
         std::cout << "deserialize failed" << std::endl;
     }
 }
-
+// TODO: add more tests
 int main()
 {
-    // serialization();
+    serialization();
     deserialization();
-
     return 0;
 }
 
