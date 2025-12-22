@@ -11,7 +11,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # 依赖管理
 list(APPEND CMAKE_PREFIX_PATH "c:/bin")
+
+if(NOT DEFINED OPENSSL_ROOT_DIR)
+    set(OPENSSL_ROOT_DIR "c:/bin")
+endif()
+set(OPENSSL_USE_STATIC_LIBS TRUE)
+
 find_package(async_simple CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 find_package(Boost QUIET COMPONENTS system)
 if(NOT TARGET Boost::system)
@@ -38,6 +45,8 @@ if(NOT TARGET Boost::system)
     target_include_directories(boost_system_header_only INTERFACE ${boost_include_dir})
     target_compile_definitions(boost_system_header_only INTERFACE BOOST_ERROR_CODE_HEADER_ONLY BOOST_SYSTEM_NO_LIB)
     add_library(Boost::system ALIAS boost_system_header_only)
+else()
+    get_target_property(boost_include_dir Boost::system INTERFACE_INCLUDE_DIRECTORIES)
 endif()
 
 enable_testing()

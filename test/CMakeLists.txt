@@ -44,10 +44,6 @@ add_executable(session_test
 target_link_libraries(session_test
         PRIVATE
         ${PROJECT_NAME}_static_library
-        Boost::system
-        ws2_32
-        mswsock
-        crypt32
 )
 
 add_test(NAME session_test COMMAND session_test)
@@ -60,12 +56,6 @@ add_executable(obscura_test
 target_link_libraries(obscura_test
         PRIVATE
         ${PROJECT_NAME}_static_library
-        async_simple::async_simple
-        Boost::system
-        ${OPENSSL_LIBRARIES}
-        ws2_32
-        mswsock
-        crypt32
 )
 
 add_test(NAME obscura_test COMMAND obscura_test)

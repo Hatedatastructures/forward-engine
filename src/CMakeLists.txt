@@ -1,8 +1,3 @@
-# 查找 OpenSSL
-find_package(OpenSSL REQUIRED)
-message(STATUS "OpenSSL Include: ${OPENSSL_INCLUDE_DIR}")
-message(STATUS "OpenSSL Libs: ${OPENSSL_LIBRARIES}")
-
 # 收集库源文件
 set(FORWARD_LIB_SOURCES
         forward-engine/http/header.cpp
@@ -67,12 +62,17 @@ target_link_libraries(${PROJECT_NAME}_static_library
         PUBLIC
         async_simple::async_simple
         Boost::system
-        ${OPENSSL_LIBRARIES}
+        OpenSSL::SSL
+        OpenSSL::Crypto
         ws2_32
         mswsock
         crypt32
 )
-target_include_directories(${PROJECT_NAME}_static_library PUBLIC ${OPENSSL_INCLUDE_DIR})
+
+target_compile_definitions(${PROJECT_NAME}_static_library
+        PUBLIC
+        BOOST_ASIO_HEADER_ONLY
+)
 
 # 创建可执行程序
 add_executable(${PROJECT_NAME}
