@@ -25,7 +25,7 @@ auto connect_session(agent::net::io_context &io_context, std::shared_ptr<ngx::lo
     try
     {
         // 创建 `session` 实例
-        auto session = std::make_shared<agent::session<agent::tcp>>(io_context);
+        auto session = std::make_shared<agent::session<agent::tcp::socket>>(io_context);
 
         // 异步连接到目标服务器
         co_await session->async_connect(agent::tcp::endpoint(agent::net::ip::make_address(server_address), server_port));

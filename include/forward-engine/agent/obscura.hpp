@@ -26,24 +26,45 @@ namespace ngx::agent
     template<typename T>
     concept awaitable_size = requires
     {
-        typename T::value_type;   // awaitable 必有 value_type
-        requires std::same_as<typename T::value_type, std::size_t>;
+        typename std::decay_t<T>::value_type;   // awaitable 必有 value_type
+        requires std::convertible_to<typename std::decay_t<T>::value_type, std::size_t>;
     };
 
     /**
-     * @brief 协议概念
-     * @tparam socket_type 协议类型
-     * @note 协议类型必须满足以下要求：
-     * 
-     * - 必须有 `async_read_some` 成员函数，返回值必须是 `awaitable_size` 类型
-     * 
-     * - 必须有 `async_write_some` 成员函数，返回值必须是 `awaitable_size` 类型
+     * @brief 流式 socket 概念
+     * @tparam T socket 类型
+     * @note 必须满足基础 socket 行为，并支持流式读写
      */
-    template <typename socket_type>
-    concept socket_concept = requires(socket_type &s, net::mutable_buffer mb, net::const_buffer cb)
+    template <typename T>
+    concept stream_concept = requires(T& s, net::mutable_buffer mb, net::const_buffer cb)
     {
-        { s.async_read_some(mb,  net::use_awaitable) } -> awaitable_size;
+        { s.async_read_some(mb, net::use_awaitable) } -> awaitable_size;
         { s.async_write_some(cb, net::use_awaitable) } -> awaitable_size;
+    };
+
+    /**
+     * @brief 数据报 socket 概念
+     * @tparam T socket 类型
+     * @note 必须满足基础 socket 行为，并支持数据报式读写
+     */
+    template <typename T>
+    concept datagram_socket = requires(T& s, net::mutable_buffer mb, net::const_buffer cb)
+    {
+        { s.async_receive(mb, net::use_awaitable) } -> awaitable_size;
+        { s.async_send(cb, net::use_awaitable) } -> awaitable_size;
+    };
+
+    /**
+     * @brief socket 概念
+     * @tparam T socket 类型
+     * @note 必须满足基础 socket 行为（Executor、Close），并支持流式或数据报式读写
+     */
+    template <typename T>
+    concept socket_concept = requires(T& s)
+    {
+        { s.get_executor() };
+        { s.close() };
+        requires stream_concept<T> || datagram_socket<T>;
     };
 
     /**
@@ -62,6 +83,7 @@ namespace ngx::agent
     {
        typename protocol_type::endpoint;
        typename protocol_type::resolver;
+       typename protocol_type::socket;
        requires socket_concept<typename protocol_type::socket>;
     };
 

@@ -10,15 +10,78 @@
 namespace ngx::agent
 {
     using tcp = boost::asio::ip::tcp;
+
+    /**
+     * @brief socket 异步 IO 适配器
+     * @note 自动适配 TCP (async_read_some/async_write_some) 和 UDP (async_receive/async_send)
+     */
+    struct adaptation
+    {
+        /**
+         * @brief 异步读取
+         * @tparam socket_t socket 类型
+         * @tparam buffer_t 缓冲区类型
+         * @tparam completion_token_t 完成 Token 类型
+         * @param socket socket 引用
+         * @param buffer 缓冲区
+         * @param token 完成 Token
+         * @return 根据 socket 类型调用对应的异步读取函数
+         */
+        template <socket_concept socket_t, typename buffer_t, typename completion_token_t>
+        static auto async_read(socket_t &socket, const buffer_t &buffer, completion_token_t &&token)
+        {
+            if constexpr (requires { socket.async_read_some(buffer, token); })
+            {
+                // TCP: 使用 async_read_some
+                return socket.async_read_some(buffer, std::forward<completion_token_t>(token));
+            }
+            else
+            {
+                // UDP: 使用 async_receive
+                return socket.async_receive(buffer, std::forward<completion_token_t>(token));
+            }
+        }
+
+        /**
+         * @brief 异步写入
+         * @tparam socket_t socket 类型
+         * @tparam buffer_t 缓冲区类型
+         * @tparam completion_token_t 完成 Token 类型
+         * @param socket socket 引用
+         * @param buffer 缓冲区
+         * @param token 完成 Token
+         * @return 根据 socket 类型调用对应的异步写入函数
+         */
+        template <socket_concept socket_t, typename buffer_t, typename completion_token_t>
+        static auto async_write(socket_t &socket, const buffer_t &buffer, completion_token_t &&token)
+        {
+            if constexpr (requires { socket.async_write_some(buffer, token); })
+            {
+                // TCP: 使用 net::async_write 保证完整写入 (流式)
+                return net::async_write(socket, buffer, std::forward<completion_token_t>(token));
+            }
+            else
+            {
+                // UDP: 使用 async_send (数据报)
+                return socket.async_send(buffer, std::forward<completion_token_t>(token));
+            }
+        }
+    };
+
     /**
      * @brief 会话管理类
-     * @tparam protocol 协议类型，必须满足 protocol_concept 约束
+     * @tparam socket_t socket 类型，必须满足 socket_concept 约束
      * @note 负责管理与目标服务器（或客户端）的连接，提供超时控制和优雅关闭功能。
+     *       已解耦具体 protocol，直接操作 socket_t。
      */
-    template <protocol_concept protocol>
-    class session : public std::enable_shared_from_this<session<protocol>>
+    template <socket_concept socket_t>
+    class session : public std::enable_shared_from_this<session<socket_t>>
     {
     public:
+        // 导出 Socket 类型和 Endpoint 类型
+        using socket_type = socket_t;
+        using endpoint_type = typename socket_t::endpoint_type;
+
         /**
          * @brief 构造函数
          * @param io_context IO 上下文
@@ -37,9 +100,9 @@ namespace ngx::agent
          * @brief 设置 socket (移动语义)
          * @param socket 协议 socket
          */
-        void socket(protocol::socket &&socket)
+        void socket(socket_type &&socket)
         {
-            socket_ = std::make_shared<typename protocol::socket>(std::move(socket));
+            socket_ = std::make_shared<socket_type>(std::move(socket));
             update_remote_info();
         }
 
@@ -47,7 +110,7 @@ namespace ngx::agent
          * @brief 设置 socket (共享指针)
          * @param socket 协议 socket 共享指针
          */
-        void socket(std::shared_ptr<typename protocol::socket> socket)
+        void socket(std::shared_ptr<socket_type> socket)
         {
             socket_ = socket;
             update_remote_info();
@@ -57,7 +120,7 @@ namespace ngx::agent
          * @brief 获取 socket
          * @return socket 共享指针引用
          */
-        [[nodiscard]] std::shared_ptr<typename protocol::socket> &socket()
+        [[nodiscard]] std::shared_ptr<socket_type> &socket()
         {
             return socket_;
         }
@@ -81,7 +144,8 @@ namespace ngx::agent
                 char buffer[8192];
                 auto buffer_view = net::buffer(buffer);
 
-                n = co_await socket_->async_read_some(buffer_view, net::use_awaitable);
+                // 使用 adaptation 适配器调用读取
+                n = co_await adaptation::async_read(*socket_, buffer_view, net::use_awaitable);
 
                 if (n > 0)
                 {
@@ -116,7 +180,8 @@ namespace ngx::agent
                     co_return 0;
 
                 std::size_t n = 0;
-                n = co_await net::async_write(*socket_, net::buffer(data), net::use_awaitable);
+                // 使用 adaptation 适配器调用写入
+                n = co_await adaptation::async_write(*socket_, net::buffer(data), net::use_awaitable);
 
                 // 写入成功，刷新超时
                 refresh_timeout();
@@ -132,7 +197,7 @@ namespace ngx::agent
          * @brief 异步连接
          * @param endpoint 目标端点
          */
-        net::awaitable<void> async_connect(const typename protocol::endpoint &endpoint)
+        net::awaitable<void> async_connect(const endpoint_type &endpoint)
         {
             // 连接超时定时器 (5秒)
             net::steady_timer connect_timer(io_context_);
@@ -156,7 +221,7 @@ namespace ngx::agent
             {
                 if (!socket_)
                 {
-                    socket_ = std::make_shared<typename protocol::socket>(io_context_);
+                    socket_ = std::make_shared<socket_type>(io_context_);
                 }
 
                 co_await socket_->async_connect(endpoint, net::use_awaitable);
@@ -250,7 +315,6 @@ namespace ngx::agent
         net::steady_timer timer_;
         net::io_context &io_context_;
 
-        // Protocol Socket
-        std::shared_ptr<typename protocol::socket> socket_;
+        std::shared_ptr<socket_type> socket_;
     };
 }
