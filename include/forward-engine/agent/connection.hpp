@@ -30,6 +30,8 @@ namespace ngx::agent
         net::awaitable<void> watchdog();
         void notify_one();
 
+        static bool zombie_connection(const std::shared_ptr<tcp::socket>& socket);
+
     public:
         explicit cache(net::io_context &ioc, std::size_t max_connections = 100);
         ~cache() = default;

@@ -3,11 +3,12 @@
 #include <boost/asio.hpp>
 #include <iostream>
 #include <cassert>
+#include <thread>
 
 namespace net = boost::asio;
 using tcp = boost::asio::ip::tcp;
 
-// Simple Echo Server to accept connections
+// 简单的 Echo 服务器用于接受连接
 net::awaitable<void> echo_server(tcp::acceptor &acceptor)
 {
     while (true)
@@ -15,8 +16,8 @@ net::awaitable<void> echo_server(tcp::acceptor &acceptor)
         try
         {
             auto socket = co_await acceptor.async_accept(net::use_awaitable);
-            // Just keep it open, don't need to read/write
-            // Use a detached coroutine to keep socket alive for a bit or until closed by peer
+            // 保持连接打开，不需要读写
+            // 使用分离的协程保持 socket 存活一段时间或直到对端关闭
             auto task = [s = std::move(socket)]() mutable -> net::awaitable<void>
             {
                 try
@@ -36,6 +37,7 @@ net::awaitable<void> echo_server(tcp::acceptor &acceptor)
             };
 
             net::co_spawn(socket.get_executor(), std::move(task), net::detached);
+            break;
         }
         catch (...)
         {
@@ -49,7 +51,7 @@ net::awaitable<void> run_test(net::io_context &ioc, unsigned short port)
     std::cout << "[Test] Starting..." << std::endl;
     tcp::endpoint endpoint(net::ip::make_address("127.0.0.1"), port);
 
-    // Create cache with limit 2
+    // 创建限制为 2 的连接池
     auto pool = std::make_shared<ngx::agent::cache>(ioc, 2);
     pool->start();
 
@@ -61,14 +63,14 @@ net::awaitable<void> run_test(net::io_context &ioc, unsigned short port)
         auto c2 = co_await pool->acquire_tcp(endpoint);
         std::cout << "  Got c2" << std::endl;
 
-        // Verify they are different
+        // 验证它们是不同的
         assert(c1 != c2);
 
         std::cout << "[Test] Step 2: Try acquire 3rd (should timeout)" << std::endl;
         bool timed_out = false;
         try
         {
-            // Set short timeout for test
+            // 为测试设置短超时
             auto c3 = co_await pool->acquire_tcp(endpoint, std::chrono::seconds(1));
         }
         catch (const boost::system::system_error &e)
@@ -86,43 +88,43 @@ net::awaitable<void> run_test(net::io_context &ioc, unsigned short port)
         assert(timed_out);
 
         std::cout << "[Test] Step 3: Release c1 and Acquire c3 (Reuse Test)" << std::endl;
-        // Save raw pointer to check reuse
+        // 保存原始指针以检查复用
         auto c1_ptr = c1.get();
-        // Release c1 to pool
+        // 释放 c1 到连接池
         co_await pool->release_tcp(c1, endpoint);
-        // c1 is now managed by pool, but shared_ptr in caller is still valid?
-        // No, release_tcp takes by value, but we passed our copy.
-        // We should reset our copy to be safe, or just know that pool has a copy.
+        // c1 现在由连接池管理，但调用者的 shared_ptr 仍然有效？
+        // 不，release_tcp 按值传递，但我们传递了我们的副本。
+        // 为了安全起见，我们应该重置我们的副本，或者只需知道连接池有一个副本。
         c1.reset();
 
-        // Try acquire again
+        // 再次尝试获取
         auto c3 = co_await pool->acquire_tcp(endpoint, std::chrono::seconds(2));
         std::cout << "  Got c3" << std::endl;
-        assert(c3.get() == c1_ptr); // Should reuse c1
+        assert(c3.get() == c1_ptr); // 应该复用 c1
         std::cout << "  Reuse confirmed." << std::endl;
 
         std::cout << "[Test] Step 4: LRU Eviction Test" << std::endl;
-        // Current active: c2, c3. Limit 2.
-        // Release both to pool.
+        // 当前活动：c2, c3。限制 2。
+        // 将两者都释放到连接池。
         co_await pool->release_tcp(c2, endpoint);
         c2.reset();
 
         co_await pool->release_tcp(c3, endpoint);
         c3.reset();
 
-        // Now pool has 2 idle connections (c1_ptr and c2_ptr).
-        // Try acquire for DIFFERENT endpoint.
-        // Use a port that is definitely closed (hopefully).
+        // 现在连接池有 2 个空闲连接（c1_ptr 和 c2_ptr）。
+        // 尝试获取不同的端点。
+        // 使用一个肯定已关闭的端口（希望如此）。
         tcp::endpoint bad_endpoint(net::ip::make_address("127.0.0.1"), port + 100);
 
         bool connection_refused = false;
         try
         {
-            // This should trigger eviction of one idle connection.
+            // 这应该触发一个空闲连接的驱逐。
             auto c_new = co_await pool->acquire_tcp(bad_endpoint);
             std::cout << "  Connected to bad endpoint? (Unexpected but allowed)" << std::endl;
-            // If it connected, it means eviction worked (slot freed) AND connection succeeded.
-            connection_refused = true; // Treat as success for test purpose
+            // 如果连接成功，意味着驱逐起作用了（插槽已释放）并且连接成功。
+            connection_refused = true; // 视为测试成功
         }
         catch (const boost::system::system_error &e)
         {
@@ -144,12 +146,12 @@ net::awaitable<void> run_test(net::io_context &ioc, unsigned short port)
         std::cout << "[Test] Step 6: Distributor Sharding" << std::endl;
         ngx::agent::distributor dist(ioc);
 
-        // Test UDP sharding (Round Robin)
+        // 测试 UDP 分片（轮询）
         auto u_shard1 = dist.get_udp_cache();
         auto u_shard2 = dist.get_udp_cache();
         assert(u_shard1 != nullptr);
         assert(u_shard2 != nullptr);
-        // Round robin with 4 shards implies next should be different
+        // 4 个分片的轮询意味着下一个应该是不同的
         assert(u_shard1 != u_shard2);
         std::cout << "  UDP Round Robin confirmed." << std::endl;
 
@@ -171,7 +173,7 @@ int main()
     {
         net::io_context ioc;
 
-        // Setup acceptor
+        // 设置接收器
         tcp::acceptor acceptor(ioc, tcp::endpoint(tcp::v4(), 0));
         unsigned short port = acceptor.local_endpoint().port();
         std::cout << "Server listening on port " << port << std::endl;
@@ -179,7 +181,12 @@ int main()
         net::co_spawn(ioc, echo_server(acceptor), net::detached);
         net::co_spawn(ioc, run_test(ioc, port), net::detached);
 
-        ioc.run();
+        auto io_func = [&ioc]()
+        {
+            ioc.run();
+        }; // 单独开线程调度任务
+
+        std::jthread io_thread(io_func);
     }
     catch (const std::exception &e)
     {

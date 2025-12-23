@@ -106,6 +106,48 @@ namespace ngx::agent
     }
 
     /**
+     * @brief 检查连接是否有效（僵尸连接检测）
+     * @param socket 要检查的 socket
+     * @return true 有效, false 无效（已关闭）
+     */
+    bool cache::zombie_connection(const std::shared_ptr<tcp::socket>& socket)
+    {
+        if (!socket || !socket->is_open()) return false;
+
+        boost::system::error_code ec;
+
+        socket->non_blocking(true, ec);
+        if (ec)
+        {   // 设置非阻塞失败，视为坏连接
+            socket->close(ec);
+            return false;
+        }
+
+        char buf;
+        // 使用 MSG_PEEK 检查 socket 状态
+        // 因为是非阻塞模式，如果没有数据会返回 would_block
+        const auto n = socket->receive(net::buffer(&buf, 1),
+            tcp::socket::message_peek, ec);
+
+        if (ec)
+        {
+            if (ec != net::error::would_block && ec != net::error::try_again)
+            {   // 出错且不是 EWOULDBLOCK，说明连接已断开或出错
+                socket->close(ec);
+                return false;
+            }
+        }
+        else if (n == 0)
+        {
+            // 收到 EOF (FIN)
+            socket->close(ec);
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
      * @brief 获取 TCP socket (协程调用)
      * @param endpoint 目标 TCP 端点
      * @param timeout 获取超时时间
@@ -131,35 +173,10 @@ namespace ngx::agent
                 if (it->second.empty())
                     cache_.erase(it);
 
-                // 僵尸连接检测 
-                if (socket_->is_open())
+                // 僵尸连接检测
+                if (zombie_connection(socket_))
                 {
-                    boost::system::error_code ec;
-                    char buf;
-                    // 使用 MSG_PEEK | MSG_DONTWAIT 检查 socket 状态
-                    // 如果 socket 已断开（收到 FIN），recv 会返回 0 或错误
-                    const auto n = socket_->receive(net::buffer(&buf, 1),
-                        tcp::socket::message_peek, ec);
-                    
-                    bool is_stale = false;
-                    if (ec && ec != net::error::would_block && ec != net::error::try_again)
-                    {
-                        is_stale = true;
-                    }
-                    else if (n == 0)
-                    {
-                        // 收到 EOF (FIN)
-                        is_stale = true;
-                    }
-                    
-                    if (!is_stale)
-                    {
-                        co_return socket_;
-                    }
-                    
-                    // 是僵尸连接，自动销毁 
-                    socket_->close(ec);
-                    continue; 
+                    co_return socket_;
                 }
 
                 // 这是一个坏掉的 socket，让其自动销毁触发 deleter 修正计数
@@ -246,7 +263,23 @@ namespace ngx::agent
             delete s;
         };
 
-        co_return std::shared_ptr<tcp::socket>(new tcp::socket(ioc_), deleter);
+        auto sock = std::shared_ptr<tcp::socket>(new tcp::socket(ioc_), deleter);
+        
+        boost::system::error_code ec; // 建立连接
+        co_await sock->async_connect(endpoint, net::redirect_error(net::use_awaitable, ec));
+        
+        if (ec)
+        {
+            throw boost::system::system_error(ec);
+        }
+        
+        sock->non_blocking(true, ec); // 非阻塞模式，后续操作均为异步
+        if (ec)
+        {
+            throw boost::system::system_error(ec);
+        }
+
+        co_return sock;
     }
 
     /**
@@ -277,6 +310,8 @@ namespace ngx::agent
     /**
      * @brief 获取 UDP socket (协程调用)
      * @note UDP 无状态，通常不复用，但受全局数量限制
+     * @note UDP socket 获取后不像 TCP socket 那样提前连接好了，获取到的 socket 是未连接状态，
+     *       调用者需要手动调用 async_connect 连接到目标端点。
      */
     auto cache::acquire_udp(const std::chrono::seconds timeout)
         -> net::awaitable<std::shared_ptr<udp::socket>>
