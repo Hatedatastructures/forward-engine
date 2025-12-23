@@ -59,3 +59,15 @@ target_link_libraries(obscura_test
 )
 
 add_test(NAME obscura_test COMMAND obscura_test)
+
+# connection 测试可执行程序
+add_executable(connection_test
+        connection_test.cpp
+)
+
+target_link_libraries(connection_test
+        PRIVATE
+        ${PROJECT_NAME}_static_library
+)
+
+add_test(NAME connection_test COMMAND connection_test)

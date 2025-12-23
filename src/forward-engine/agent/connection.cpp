@@ -1,3 +1,4 @@
+#include <ranges>
 #include <agent/connection.hpp>
 
 namespace ngx::agent
@@ -45,19 +46,60 @@ namespace ngx::agent
     }
 
     /**
+     * @brief 关闭连接池
+     * @details 停止看门狗，取消所有等待，关闭所有空闲连接
+     */
+    void cache::shutdown()
+    {
+        auto do_shutdown = [self = shared_from_this()]()
+        {
+            if (self->shutdown_) return;
+            self->shutdown_ = true;
+
+            // 1. 取消看门狗定时器
+            try { self->timer_.cancel(); } catch(...) {}
+
+            while (!self->waiters_.empty())
+            {
+                auto weak_timer = self->waiters_.front();
+                self->waiters_.pop_front();
+                if (const auto timer = weak_timer.lock())
+                {
+                    try { timer->cancel(); } catch(...) {}
+                }
+            }
+
+            // 3. 关闭所有缓存的连接
+            for (auto &list: self->cache_ | std::views::values)
+            {
+                for (const auto&[socket_, last_used] : list)
+                {
+                    boost::system::error_code ignore;
+                    socket_->close(ignore);
+                }
+            }
+            self->cache_.clear();
+        };
+        
+        net::dispatch(strand_, do_shutdown);
+    }
+
+    /**
      * @brief 通知一个等待中的协程
      * @note 用于唤醒等待中的协程, 使其继续执行
      */
     void cache::notify_one()
     {
+        if (shutdown_) return;
+
         while (!waiters_.empty())
         {
             auto weak_timer = waiters_.front();
             waiters_.pop_front();
             // 检查定时器是否死亡
-            if (auto timer = weak_timer.lock())
+            if (const auto timer = weak_timer.lock())
             {   // 确保定时器未过期
-                timer->cancel();
+                try { timer->cancel(); } catch(...) {}
                 return;
             }
         }
@@ -66,53 +108,128 @@ namespace ngx::agent
     /**
      * @brief 获取 TCP socket (协程调用)
      * @param endpoint 目标 TCP 端点
+     * @param timeout 获取超时时间
      * @return `net::awaitable<std::shared_ptr<tcp::socket>>` 已连接的 TCP socket 实例
      */
-    net::awaitable<std::shared_ptr<tcp::socket>> cache::acquire_tcp(tcp::endpoint endpoint)
+    auto cache::acquire_tcp(const tcp::endpoint endpoint, const std::chrono::seconds timeout)
+        -> net::awaitable<std::shared_ptr<tcp::socket>>
     {
         co_await net::dispatch(strand_, net::use_awaitable);
+
+        if (shutdown_)
+        {
+            throw boost::system::system_error(net::error::operation_aborted);
+        }
 
         while (true)
         {
             // A. 尝试复用
-            auto it = cache_.find(endpoint);
-            if (it != cache_.end() && !it->second.empty())
+            if (auto it = cache_.find(endpoint); it != cache_.end() && !it->second.empty())
             {
-                auto conn = it->second.front();
+                auto [socket_, last_used] = it->second.front();
                 it->second.pop_front();
                 if (it->second.empty())
                     cache_.erase(it);
 
-                if (conn.socket_->is_open())
+                // 僵尸连接检测 
+                if (socket_->is_open())
                 {
-                    // 找到了复用的，直接返回
-                    co_return conn.socket_;
+                    boost::system::error_code ec;
+                    char buf;
+                    // 使用 MSG_PEEK | MSG_DONTWAIT 检查 socket 状态
+                    // 如果 socket 已断开（收到 FIN），recv 会返回 0 或错误
+                    const auto n = socket_->receive(net::buffer(&buf, 1),
+                        tcp::socket::message_peek, ec);
+                    
+                    bool is_stale = false;
+                    if (ec && ec != net::error::would_block && ec != net::error::try_again)
+                    {
+                        is_stale = true;
+                    }
+                    else if (n == 0)
+                    {
+                        // 收到 EOF (FIN)
+                        is_stale = true;
+                    }
+                    
+                    if (!is_stale)
+                    {
+                        co_return socket_;
+                    }
+                    
+                    // 是僵尸连接，自动销毁 
+                    socket_->close(ec);
+                    continue; 
                 }
 
                 // 这是一个坏掉的 socket，让其自动销毁触发 deleter 修正计数
                 continue;
             }
 
-            // B. 检查配额, 如果超过最大连接数, 则等待, 否则跳出循环直接创建新连接
+            // B. 检查配额
             if (active_count_ < max_connections_)
             {
                 break;
             }
 
-            // C. 等待可用资源
+            // LRU 驱逐策略：如果已达上限，尝试强制销毁一个最老的空闲连接
+            if (!cache_.empty())
+            {
+                // 寻找最老的连接
+                auto oldest_it = cache_.end();
+                auto oldest_list_it = std::list<cache::idle_connection>::iterator();
+                std::chrono::steady_clock::time_point oldest_time = std::chrono::steady_clock::time_point::max();
+
+                for (auto map_it = cache_.begin(); map_it != cache_.end(); ++map_it)
+                {
+                    if (map_it->second.empty()) continue;
+                    
+                    // 链表尾部通常是较新的，那么 front 就是最老的
+                    if (auto& list = map_it->second; list.front().last_used < oldest_time)
+                    {
+                        oldest_time = list.front().last_used;
+                        oldest_it = map_it;
+                        oldest_list_it = list.begin();
+                    }
+                }
+
+                if (oldest_it != cache_.end())
+                {
+                    // 驱逐它
+                    boost::system::error_code ignore;
+                    oldest_list_it->socket_->close(ignore); // 关闭 socket
+                    oldest_it->second.erase(oldest_list_it); // 从缓存移除
+                    if (oldest_it->second.empty())
+                    {
+                        cache_.erase(oldest_it);
+                    }
+
+                }
+            }
+
+            // C. 等待可用资源 (带超时)
             auto timer = std::make_shared<net::steady_timer>(ioc_);
-            timer->expires_at(std::chrono::steady_clock::time_point::max());
-            waiters_.emplace_back(timer); // 放入等待队列，等待其他socket销毁调用notify_one函数归还令牌
+            timer->expires_after(timeout);
+            waiters_.emplace_back(timer); 
 
             boost::system::error_code ec;
             co_await timer->async_wait(net::redirect_error(net::use_awaitable, ec));
+            
+            if (ec != net::error::operation_aborted)
+            {
+                // 从等待队列中移除自己
+                throw boost::system::system_error(net::error::timed_out);
+            }
+            
+            // 如果是 operation_aborted，说明被 notify_one 唤醒了（或者 shutdown）
+            if (shutdown_) throw boost::system::system_error(net::error::operation_aborted);
         }
 
         // D. 创建新连接
         ++active_count_;
         
         // 使用自定义 deleter 自动管理计数
-        auto deleter = [weak_self = weak_from_this()](tcp::socket *s) 
+        auto deleter = [weak_self = weak_from_this()](const tcp::socket *s)
         {
             if (auto self = weak_self.lock())
             {
@@ -137,9 +254,12 @@ namespace ngx::agent
      * @param socket 要释放的 TCP socket 实例
      * @param endpoint 关联的 TCP 端点
      */
-    net::awaitable<void> cache::release_tcp(std::shared_ptr<tcp::socket> socket, tcp::endpoint endpoint)
+    auto cache::release_tcp(const std::shared_ptr<tcp::socket> socket, const tcp::endpoint endpoint)
+        -> net::awaitable<void>
     {
         co_await net::dispatch(strand_, net::use_awaitable);
+        
+        if (shutdown_) co_return;
 
         if (!socket || !socket->is_open())
         {
@@ -158,23 +278,36 @@ namespace ngx::agent
      * @brief 获取 UDP socket (协程调用)
      * @note UDP 无状态，通常不复用，但受全局数量限制
      */
-    net::awaitable<std::shared_ptr<udp::socket>> cache::acquire_udp()
+    auto cache::acquire_udp(const std::chrono::seconds timeout)
+        -> net::awaitable<std::shared_ptr<udp::socket>>
     {
         co_await net::dispatch(strand_, net::use_awaitable);
-
-        while (active_count_ >= max_connections_)
+        
+        if (shutdown_)
         {
+            throw boost::system::system_error(net::error::operation_aborted);
+        }
+
+        while (active_count_ >= max_connections_) 
+        {   // 等待直到有空闲连接
             auto timer = std::make_shared<net::steady_timer>(ioc_);
-            timer->expires_at(std::chrono::steady_clock::time_point::max());
+            timer->expires_after(timeout);
             waiters_.emplace_back(timer);
 
             boost::system::error_code ec;
             co_await timer->async_wait(net::redirect_error(net::use_awaitable, ec));
+            
+            if (ec != net::error::operation_aborted)
+            {
+                throw boost::system::system_error(net::error::timed_out);
+            }
+            
+            if (shutdown_) throw boost::system::system_error(net::error::operation_aborted);
         }
 
         ++active_count_;
 
-        auto deleter = [weak_self = weak_from_this()](udp::socket *s) 
+        auto deleter = [weak_self = weak_from_this()](const udp::socket *s)
         {
             if (auto self = weak_self.lock())
             {
@@ -199,7 +332,8 @@ namespace ngx::agent
     /**
      * @brief 释放 UDP 计数
      */
-    net::awaitable<void> cache::release_udp()
+    auto cache::release_udp()
+        -> net::awaitable<void>
     {
         // UDP socket 由 deleter 管理计数，这里无需操作
         co_return;
@@ -209,37 +343,48 @@ namespace ngx::agent
      * @brief 后台看门狗协程
      * @note 运行在 strand_ 上，无需加锁保护
      */
-    net::awaitable<void> cache::watchdog()
+    auto cache::watchdog()
+        -> net::awaitable<void>
     {
-        // 保活 cache 实例，防止在协程运行期间被销毁
-        // 注意：这会创建一个循环引用，直到 io_context 停止或显式打破
-        auto self = shared_from_this();
-
-        // 初始化
-        timer_.expires_after(cleanup_timeout_);
+        // 使用 weak_ptr 避免循环引用，允许 cache 正常析构
+        const auto weak_self = weak_from_this();
 
         while (true)
         {
+            // 每次循环前检查 cache 是否还活着
+            auto self = weak_self.lock();
+            if (!self || self->shutdown_) co_return;
+            
+            self.reset(); 
+            
+            self = weak_self.lock();
+            if (!self || self->shutdown_) co_return;
+            
+            self->timer_.expires_after(self->cleanup_timeout_);
             boost::system::error_code ec;
-            co_await timer_.async_wait(net::redirect_error(net::use_awaitable, ec));
+            
+            // 用 shutdown() 来做退出机制。
+            // 这样 watchdog 可以放心地持有 self。
+            
+            co_await self->timer_.async_wait(net::redirect_error(net::use_awaitable, ec));
 
-            if (ec == net::error::operation_aborted)
-                co_return; // 定时器被取消
+            if (ec == net::error::operation_aborted || self->shutdown_)
+                co_return; // 定时器被取消或收到停机信号
 
             auto now = std::chrono::steady_clock::now();
 
 
-            for (auto it = cache_.begin(); it != cache_.end();)
+            // 遍历池子清理超时连接
+            for (auto it = self->cache_.begin(); it != self->cache_.end();)
             {
                 auto &list = it->second;
                 for (auto list_it = list.begin(); list_it != list.end();)
-                {   // list 结构遍历
-                    if (now - list_it->last_used > idle_timeout_)
+                {
+                    if (now - list_it->last_used > self->idle_timeout_)
                     {
                         boost::system::error_code ignore;
                         list_it->socket_->close(ignore);
-                        list_it = list.erase(list_it);
-                        // shared_ptr 销毁 -> deleter 触发 -> 连接计数减少并唤醒任务 -> acquire_tcp 获取令牌创建连接
+                        list_it = list.erase(list_it); // shared_ptr 销毁 -> deleter 触发 -> 计数减少并唤醒
                     }
                     else
                     {
@@ -249,16 +394,13 @@ namespace ngx::agent
 
                 if (list.empty())
                 {
-                    it = cache_.erase(it);
+                    it = self->cache_.erase(it);
                 }
                 else
                 {
                     ++it;
                 }
             }
-
-            // 重置
-            timer_.expires_after(cleanup_timeout_);
         }
     }
 }
