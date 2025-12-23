@@ -316,5 +316,5 @@ namespace ngx::agent
         net::io_context &io_context_;
 
         std::shared_ptr<socket_type> socket_;
-    };
+    }; // class session   
 }

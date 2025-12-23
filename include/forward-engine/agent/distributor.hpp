@@ -32,5 +32,5 @@ namespace ngx::agent
         void shutdown();
     private:
         std::unordered_map<std::string,connection_type> maps; // variant 实现同时存储 tcp 和 udp 会话
-    };
+    }; // class distributor
 }

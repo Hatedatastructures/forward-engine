@@ -21,6 +21,7 @@ set(FORWARD_LIB_SOURCES
         ../include/forward-engine/agent/distributor.hpp
         ../include/forward-engine/agent/session.hpp
         ../include/forward-engine/agent/connection.hpp
+        forward-engine/agent/connection.cpp
 )
 
 # 创建静态库
@@ -48,6 +49,7 @@ add_library(${PROJECT_NAME}_static_library STATIC
         ../include/forward-engine/agent/session.hpp
         ../include/forward-engine/agent/distributor.hpp
         ../include/forward-engine/agent/connection.hpp
+        forward-engine/agent/connection.cpp
 )
 
 # 设置目标属性
@@ -97,6 +99,7 @@ add_executable(${PROJECT_NAME}
         ../include/forward-engine/agent/distributor.hpp
         ../include/forward-engine/agent/session.hpp
         ../include/forward-engine/agent/connection.hpp
+        forward-engine/agent/connection.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}
