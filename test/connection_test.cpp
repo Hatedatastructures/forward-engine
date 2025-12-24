@@ -175,7 +175,7 @@ int main()
 
         // 设置接收器
         tcp::acceptor acceptor(ioc, tcp::endpoint(tcp::v4(), 0));
-        unsigned short port = acceptor.local_endpoint().port();
+        const unsigned short port = acceptor.local_endpoint().port();
         std::cout << "Server listening on port " << port << std::endl;
 
         net::co_spawn(ioc, echo_server(acceptor), net::detached);

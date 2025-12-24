@@ -15,7 +15,7 @@ namespace ngx::agent
     void cache::idle(std::chrono::seconds timeout)
     {
         // 确保在 strand 上修改，避免数据竞争
-        auto set_timeout = [self = shared_from_this(), timeout]() 
+        auto set_timeout = [self = shared_from_this(), timeout]()
         {
             self->idle_timeout_ = timeout;
         };
@@ -29,7 +29,7 @@ namespace ngx::agent
     void cache::cleanup(std::chrono::seconds interval)
     {
         // 确保在 strand 上修改，避免数据竞争
-        auto set_timeout = [self = shared_from_this(), interval]() 
+        auto set_timeout = [self = shared_from_this(), interval]()
         {
             self->cleanup_timeout_ = interval;
         };
@@ -80,7 +80,7 @@ namespace ngx::agent
             }
             self->cache_.clear();
         };
-        
+
         net::dispatch(strand_, do_shutdown);
     }
 
@@ -200,7 +200,7 @@ namespace ngx::agent
                 for (auto map_it = cache_.begin(); map_it != cache_.end(); ++map_it)
                 {
                     if (map_it->second.empty()) continue;
-                    
+
                     // 链表尾部通常是较新的，那么 front 就是最老的
                     if (auto& list = map_it->second; list.front().last_used < oldest_time)
                     {
@@ -214,7 +214,7 @@ namespace ngx::agent
                 {
                     // 驱逐它
                     boost::system::error_code ignore;
-                    oldest_list_it->socket_->close(ignore); // 关闭 socket
+                    oldest_list_it->socket->close(ignore); // 关闭 socket
                     oldest_it->second.erase(oldest_list_it); // 从缓存移除
                     if (oldest_it->second.empty())
                     {
@@ -227,24 +227,24 @@ namespace ngx::agent
             // C. 等待可用资源 (带超时)
             auto timer = std::make_shared<net::steady_timer>(ioc_);
             timer->expires_after(timeout);
-            waiters_.emplace_back(timer); 
+            waiters_.emplace_back(timer);
 
             boost::system::error_code ec;
             co_await timer->async_wait(net::redirect_error(net::use_awaitable, ec));
-            
+
             if (ec != net::error::operation_aborted)
             {
                 // 从等待队列中移除自己
                 throw boost::system::system_error(net::error::timed_out);
             }
-            
+
             // 如果是 operation_aborted，说明被 notify_one 唤醒了（或者 shutdown）
             if (shutdown_) throw boost::system::system_error(net::error::operation_aborted);
         }
 
         // D. 创建新连接
         ++active_count_;
-        
+
         // 使用自定义 deleter 自动管理计数
         auto deleter = [weak_self = weak_from_this()](const tcp::socket *s)
         {
@@ -264,15 +264,15 @@ namespace ngx::agent
         };
 
         auto sock = std::shared_ptr<tcp::socket>(new tcp::socket(ioc_), deleter);
-        
+
         boost::system::error_code ec; // 建立连接
         co_await sock->async_connect(endpoint, net::redirect_error(net::use_awaitable, ec));
-        
+
         if (ec)
         {
             throw boost::system::system_error(ec);
         }
-        
+
         sock->non_blocking(true, ec); // 非阻塞模式，后续操作均为异步
         if (ec)
         {
@@ -291,7 +291,7 @@ namespace ngx::agent
         -> net::awaitable<void>
     {
         co_await net::dispatch(strand_, net::use_awaitable);
-        
+
         if (shutdown_) co_return;
 
         if (!socket || !socket->is_open())
@@ -309,21 +309,21 @@ namespace ngx::agent
 
     /**
      * @brief 获取 UDP socket (协程调用)
-     * @note UDP 无状态，通常不复用，但受全局数量限制
-     * @note UDP socket 获取后不像 TCP socket 那样提前连接好了，获取到的 socket 是未连接状态，
-     *       调用者需要手动调用 async_connect 连接到目标端点。
+     * @param timeout 等待超时时间，默认 5 秒
+     * @return `std::shared_ptr<udp::socket>` 未连接的 UDP socket 实例
+     * 
      */
     auto cache::acquire_udp(const std::chrono::seconds timeout)
         -> net::awaitable<std::shared_ptr<udp::socket>>
     {
         co_await net::dispatch(strand_, net::use_awaitable);
-        
+
         if (shutdown_)
         {
             throw boost::system::system_error(net::error::operation_aborted);
         }
 
-        while (active_count_ >= max_connections_) 
+        while (active_count_ >= max_connections_)
         {   // 等待直到有空闲连接
             auto timer = std::make_shared<net::steady_timer>(ioc_);
             timer->expires_after(timeout);
@@ -331,12 +331,12 @@ namespace ngx::agent
 
             boost::system::error_code ec;
             co_await timer->async_wait(net::redirect_error(net::use_awaitable, ec));
-            
+
             if (ec != net::error::operation_aborted)
             {
                 throw boost::system::system_error(net::error::timed_out);
             }
-            
+
             if (shutdown_) throw boost::system::system_error(net::error::operation_aborted);
         }
 
@@ -389,18 +389,18 @@ namespace ngx::agent
             // 每次循环前检查 cache 是否还活着
             auto self = weak_self.lock();
             if (!self || self->shutdown_) co_return;
-            
-            self.reset(); 
-            
+
+            self.reset();
+
             self = weak_self.lock();
             if (!self || self->shutdown_) co_return;
-            
+
             self->timer_.expires_after(self->cleanup_timeout_);
             boost::system::error_code ec;
-            
+
             // 用 shutdown() 来做退出机制。
             // 这样 watchdog 可以放心地持有 self。
-            
+
             co_await self->timer_.async_wait(net::redirect_error(net::use_awaitable, ec));
 
             if (ec == net::error::operation_aborted || self->shutdown_)
@@ -418,7 +418,7 @@ namespace ngx::agent
                     if (now - list_it->last_used > self->idle_timeout_)
                     {
                         boost::system::error_code ignore;
-                        list_it->socket_->close(ignore);
+                        list_it->socket->close(ignore);
                         list_it = list.erase(list_it); // shared_ptr 销毁 -> deleter 触发 -> 计数减少并唤醒
                     }
                     else

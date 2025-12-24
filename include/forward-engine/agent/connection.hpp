@@ -23,7 +23,7 @@ namespace ngx::agent
     {
         struct idle_connection
         {
-            std::shared_ptr<tcp::socket> socket_;
+            std::shared_ptr<tcp::socket> socket;
             std::chrono::steady_clock::time_point last_used;
         }; // struct idle_connection
 

@@ -255,6 +255,24 @@ namespace ngx::agent
         }
 
         /**
+         * @brief 释放 socket 所有权
+         * @details 将 socket 的所有权从 session 中转移出来，防止 session 析构时关闭 socket。
+         *          通常用于将连接归还给连接池复用。
+         *          调用此函数后，session 将不再持有 socket，且会取消超时定时器。
+         *          注意：调用此函数前必须确保 socket 处于空闲状态（无挂起操作），否则可能会导致未定义行为。
+         * @return socket 共享指针
+         */
+        [[nodiscard]] std::shared_ptr<socket_type> release_socket()
+        {
+            // 1. 取消超时定时器
+            timer_.cancel();
+
+            // 2. 转移所有权，socket_ 变为 nullptr
+            // 此时 session 析构将不会关闭 socket，因为 socket_ 已为空
+            return std::move(socket_);
+        }
+
+        /**
          * @brief 关闭连接
          */
         void close()
@@ -316,5 +334,5 @@ namespace ngx::agent
         net::io_context &io_context_;
 
         std::shared_ptr<socket_type> socket_;
-    }; // class session   
+    }; // class session
 }
