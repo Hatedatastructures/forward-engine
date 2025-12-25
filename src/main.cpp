@@ -1,4 +1,5 @@
 #include <http.hpp>
+#include <agent.hpp>
 #include <memory>
 #include <agent/session.hpp>
 #include <agent/distributor.hpp>

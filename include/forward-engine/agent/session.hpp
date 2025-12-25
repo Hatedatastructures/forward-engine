@@ -171,7 +171,7 @@ namespace ngx::agent
          * @param data 要写入的数据
          * @return 写入的字节数
          */
-        net::awaitable<std::size_t> async_write(std::string_view data)
+        net::awaitable<std::size_t> async_write(const std::string_view data)
         {
             refresh_timeout();
             try
