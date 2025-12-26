@@ -1,11 +1,14 @@
 #pragma once
 
 #include <memory>
+#include <type_traits>
+#include <utility>
 #include <string>
 #include <string_view>
 #include <chrono>
 #include <boost/asio.hpp>
 #include "obscura.hpp"
+#include "connection.hpp"
 
 namespace ngx::agent
 {
@@ -81,6 +84,7 @@ namespace ngx::agent
         // 导出 Socket 类型和 Endpoint 类型
         using socket_type = socket_t;
         using endpoint_type = typename socket_t::endpoint_type;
+        using socket_ptr_type = std::conditional_t<std::is_same_v<socket_type, tcp::socket>, internal_ptr, std::unique_ptr<socket_type>>;
 
         /**
          * @brief 构造函数
@@ -102,27 +106,43 @@ namespace ngx::agent
          */
         void socket(socket_type &&socket)
         {
-            socket_ = std::make_shared<socket_type>(std::move(socket));
+            if constexpr (std::is_same_v<socket_type, tcp::socket>)
+            {
+                socket_ = socket_ptr_type(new socket_type(std::move(socket)), deleter{});
+            }
+            else
+            {
+                socket_ = std::make_unique<socket_type>(std::move(socket));
+            }
             update_remote_info();
         }
 
         /**
-         * @brief 设置 socket (共享指针)
-         * @param socket 协议 socket 共享指针
+         * @brief 设置 socket (内部指针)
+         * @param socket 协议 socket 内部指针
          */
-        void socket(std::shared_ptr<socket_type> socket)
+        void socket(socket_ptr_type socket)
         {
-            socket_ = socket;
+            socket_ = std::move(socket);
             update_remote_info();
         }
 
         /**
          * @brief 获取 socket
-         * @return socket 共享指针引用
+         * @return socket 原始指针
          */
-        [[nodiscard]] std::shared_ptr<socket_type> &socket()
+        [[nodiscard]] socket_type *socket()
         {
-            return socket_;
+            return socket_.get();
+        }
+
+        /**
+         * @brief 获取 socket
+         * @return socket 原始指针
+         */
+        [[nodiscard]] const socket_type *socket() const
+        {
+            return socket_.get();
         }
 
         /**
@@ -221,7 +241,14 @@ namespace ngx::agent
             {
                 if (!socket_)
                 {
-                    socket_ = std::make_shared<socket_type>(io_context_);
+                    if constexpr (std::is_same_v<socket_type, tcp::socket>)
+                    {
+                        socket_ = socket_ptr_type(new socket_type(io_context_), deleter{});
+                    }
+                    else
+                    {
+                        socket_ = std::make_unique<socket_type>(io_context_);
+                    }
                 }
 
                 co_await socket_->async_connect(endpoint, net::use_awaitable);
@@ -260,9 +287,9 @@ namespace ngx::agent
          *          通常用于将连接归还给连接池复用。
          *          调用此函数后，session 将不再持有 socket，且会取消超时定时器。
          *          注意：调用此函数前必须确保 socket 处于空闲状态（无挂起操作），否则可能会导致未定义行为。
-         * @return socket 共享指针
+         * @return socket 内部指针
          */
-        [[nodiscard]] std::shared_ptr<socket_type> release_socket()
+        [[nodiscard]] socket_ptr_type release_socket()
         {
             // 1. 取消超时定时器
             timer_.cancel();
@@ -282,6 +309,7 @@ namespace ngx::agent
                 boost::system::error_code ec;
                 socket_->close(ec);
             }
+            socket_.reset();
             // 取消超时定时器
             timer_.cancel();
         }
@@ -333,6 +361,6 @@ namespace ngx::agent
         net::steady_timer timer_;
         net::io_context &io_context_;
 
-        std::shared_ptr<socket_type> socket_;
+        socket_ptr_type socket_;
     }; // class session
 }

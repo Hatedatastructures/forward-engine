@@ -120,7 +120,7 @@ namespace ngx::agent
     {
         struct idle_item
         {
-            tcp::socket *socket;
+            tcp::socket *socket = nullptr;
             std::chrono::steady_clock::time_point last_used;
         }; // struct idle_item
 
