@@ -7,3 +7,4 @@
 #include <agent/obscura.hpp>
 #include <agent/positive.hpp>
 #include <agent/reverse.hpp>
+#include <agent/worker.hpp>

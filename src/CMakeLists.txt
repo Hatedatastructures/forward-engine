@@ -30,6 +30,7 @@ set(FORWARD_LIB_SOURCES
         ../include/forward-engine/core/broker.hpp
         ../include/forward-engine/agent.hpp
         ../include/forward-engine/agent/worker.hpp
+        forward-engine/limit/blacklist.cpp
 )
 
 # 创建静态库
