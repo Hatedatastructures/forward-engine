@@ -9,89 +9,37 @@
 #include <boost/asio.hpp>
 #include "obscura.hpp"
 #include "connection.hpp"
+#include "adaptation.hpp"
+#include <memory/pointer.hpp>
 
 namespace ngx::agent
 {
     using tcp = boost::asio::ip::tcp;
 
-    /**
-     * @brief socket 异步 IO 适配器
-     * @note 自动适配 TCP (async_read_some/async_write_some) 和 UDP (async_receive/async_send)
-     */
-    struct adaptation
-    {
-        /**
-         * @brief 异步读取
-         * @tparam socket_t socket 类型
-         * @tparam buffer_t 缓冲区类型
-         * @tparam completion_token_t 完成 Token 类型
-         * @param socket socket 引用
-         * @param buffer 缓冲区
-         * @param token 完成 Token
-         * @return 根据 socket 类型调用对应的异步读取函数
-         */
-        template <socket_concept socket_t, typename buffer_t, typename completion_token_t>
-        static auto async_read(socket_t &socket, const buffer_t &buffer, completion_token_t &&token)
-        {
-            if constexpr (requires { socket.async_read_some(buffer, token); })
-            {
-                // TCP: 使用 async_read_some
-                return socket.async_read_some(buffer, std::forward<completion_token_t>(token));
-            }
-            else
-            {
-                // UDP: 使用 async_receive
-                return socket.async_receive(buffer, std::forward<completion_token_t>(token));
-            }
-        }
-
-        /**
-         * @brief 异步写入
-         * @tparam socket_t socket 类型
-         * @tparam buffer_t 缓冲区类型
-         * @tparam completion_token_t 完成 Token 类型
-         * @param socket socket 引用
-         * @param buffer 缓冲区
-         * @param token 完成 Token
-         * @return 根据 socket 类型调用对应的异步写入函数
-         */
-        template <socket_concept socket_t, typename buffer_t, typename completion_token_t>
-        static auto async_write(socket_t &socket, const buffer_t &buffer, completion_token_t &&token)
-        {
-            if constexpr (requires { socket.async_write_some(buffer, token); })
-            {
-                // TCP: 使用 net::async_write 保证完整写入 (流式)
-                return net::async_write(socket, buffer, std::forward<completion_token_t>(token));
-            }
-            else
-            {
-                // UDP: 使用 async_send (数据报)
-                return socket.async_send(buffer, std::forward<completion_token_t>(token));
-            }
-        }
-    };
-
+    
     /**
      * @brief 会话管理类
-     * @tparam socket_t socket 类型，必须满足 socket_concept 约束
+     * @tparam socket socket 类型，必须满足 socket_concept 约束
      * @note 负责管理与目标服务器（或客户端）的连接，提供超时控制和优雅关闭功能。
-     *       已解耦具体 protocol，直接操作 socket_t。
+     *       已解耦具体 protocol，直接操作 socket。
      */
-    template <socket_concept socket_t>
-    class session : public std::enable_shared_from_this<session<socket_t>>
+    template <socket_concept socket>
+    class session : public std::enable_shared_from_this<session<socket>>
     {
     public:
         // 导出 Socket 类型和 Endpoint 类型
-        using socket_type = socket_t;
-        using endpoint_type = typename socket_t::endpoint_type;
+        using socket_type = socket;
+        using endpoint_type = typename socket::endpoint_type;
         using socket_ptr_type = std::conditional_t<std::is_same_v<socket_type, tcp::socket>, internal_ptr, std::unique_ptr<socket_type>>;
 
         /**
          * @brief 构造函数
          * @param io_context IO 上下文
          */
-        explicit session(net::io_context &io_context)
-            : timer_(io_context), io_context_(io_context)
+        explicit session(net::io_context &io_context, socket_type socket, distributor &dist)
+            : io_context_(io_context),
+              distributor_(dist),
+              client_socket_(std::move(socket)) // 1. 接管客户端连接 (左手)
         {
         }
 
@@ -265,6 +213,16 @@ namespace ngx::agent
             }
         }
 
+        void start()
+        {
+            // 启动协程，并使用 shared_from_this() 自保，防止 Session 在协程结束前被析构
+            auto process = [self = this->shared_from_this()]() -> net::awaitable<void>
+            {
+                co_await self->run_process();
+            };
+            net::co_spawn(io_context_,process,net::detached);
+        }
+
         /**
          * @brief 获取远程地址
          */
@@ -300,18 +258,20 @@ namespace ngx::agent
         }
 
         /**
-         * @brief 关闭连接
+         * @brief 强制关闭会话
          */
         void close()
         {
-            if (socket_ && socket_->is_open())
+            boost::system::error_code ec;
+            // 关闭客户端连接
+            if constexpr (requires { client_socket_.is_open(); }) 
             {
-                boost::system::error_code ec;
-                socket_->close(ec);
+                if (client_socket_.is_open()) 
+                {
+                    client_socket_.close(ec);
+                }
             }
-            socket_.reset();
-            // 取消超时定时器
-            timer_.cancel();
+            // upstream_ 是 unique_ptr，会自动归还给连接池，无需手动操作
         }
 
     private:
@@ -329,6 +289,94 @@ namespace ngx::agent
                     remote_address_ = ep.address().to_string();
                     remote_port_ = ep.port();
                 }
+            }
+        }
+
+        /**
+         * @brief 核心业务逻辑：解析 -> 路由 -> 转发
+         */
+        net::awaitable<void> run_process()
+        {
+            try
+            {
+                // 1. 读取 HTTP 头部 (从客户端读)
+                // 注意：这里需要你的 http::request 类支持从 socket 引用读取
+                http::request req;
+                // 如果 request.hpp 还没适配模板 socket，你需要确保它能接受 client_socket_
+                co_await req.async_read_header(client_socket_);
+
+                // 2. 路由决策 (问 Distributor 要连接)
+                if (req.is_forward_proxy()) 
+                {
+                    // ---> 正向代理 (去 Google 等)
+                    std::string host = req.host();
+                    std::string port = req.port();
+                    // 这里会进行 DNS 解析、黑名单检查、连接池获取
+                    upstream_ = co_await distributor_.route_forward(host, port);
+                }
+                else
+                {
+                    // ---> 反向代理 (去内部后端)
+                    std::string host = req.host();
+                    // 这里会查配置表、负载均衡
+                    upstream_ = co_await distributor_.route_reverse(host);
+                }
+
+                // 3. 建立连接后的握手处理
+                if (req.method() == "CONNECT")
+                {
+                    // HTTPS 隧道：先回复 200 Connection Established
+                    const std::string resp = "HTTP/1.1 200 Connection Established\r\n\r\n";
+                    co_await adaptation::async_write(client_socket_, net::buffer(resp), net::use_awaitable);
+                }
+                else
+                {
+                    // 普通 HTTP/WebSocket：
+                    // 我们刚才读掉了 Header，现在要把它转发给上游，否则上游不知道你要干嘛
+                    std::string raw_header = req.serialize(); 
+                    co_await net::async_write(*upstream_, net::buffer(raw_header), net::use_awaitable);
+                }
+
+                // 4. 开始双向转发 (WebSocket 也会在这里自动处理)
+                co_await tunnel();
+
+            }
+            catch (const std::exception &e)
+            {
+                // 任何环节出错（DNS失败、黑名单拦截、连接断开），关闭会话
+                close();
+            }
+        }
+        /**
+         * @brief 双向隧道 (桥接 client 和 upstream)
+         */
+        net::awaitable<void> tunnel()
+        {
+            // 同时启动两个方向的数据搬运
+            // C++20 协程的 && 操作符会等待两个协程都完成，或者任意一个抛出异常
+            co_await (transfer(client_socket_, upstream_.get()) && transfer(upstream_.get(), client_socket_));
+        }
+
+        /**
+         * @brief 单向数据搬运 (通用模板)
+         */
+        template <typename Source, typename Dest>
+        net::awaitable<void> transfer(Source &from, Dest &to)
+        {
+            std::array<char, 8192> buf;
+            try
+            {
+                while (true)
+                {
+                    // 读
+                    auto n = co_await adaptation::async_read(from, net::buffer(buf), net::use_awaitable);
+                    // 写
+                    co_await adaptation::async_write(to, net::buffer(buf, n), net::use_awaitable);
+                }
+            }
+            catch (...)
+            {
+                // 读写异常通常意味着连接关闭，正常退出协程即可
             }
         }
 
@@ -360,7 +408,13 @@ namespace ngx::agent
         std::uint16_t remote_port_{0};
         net::steady_timer timer_;
         net::io_context &io_context_;
+        distributor &distributor_; // 引用 Worker 的分发器
 
-        socket_ptr_type socket_;
+        // 【左手】客户端连接 (Session 独占，随 Session 销毁)
+        socket_type client_socket_;
+
+        // 【右手】上游连接 (从连接池借来，unique_ptr 会自动归还)
+        // internal_ptr 定义在 connection.hpp (std::unique_ptr<tcp::socket, deleter>)
+        internal_ptr upstream_
     }; // class session
 }

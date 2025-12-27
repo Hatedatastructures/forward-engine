@@ -31,6 +31,10 @@ set(FORWARD_LIB_SOURCES
         ../include/forward-engine/agent.hpp
         ../include/forward-engine/agent/worker.hpp
         forward-engine/limit/blacklist.cpp
+        ../include/forward-engine/memory/pointer.hpp
+        ../include/forward-engine/agent/adaptation.hpp
+        ../include/forward-engine/agent/analysis.hpp
+        forward-engine/agent/analysis.cpp
 )
 
 # 创建静态库
