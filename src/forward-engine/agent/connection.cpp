@@ -77,45 +77,20 @@ namespace ngx::agent
      */
     bool source::zombie_detection(tcp::socket *s)
     {
-        if (!s->is_open())
+        if (!s || !s->is_open())
         {
             return false;
         }
 
-        // 使用 MSG_PEEK | MSG_DONTWAIT 偷看内核缓冲区
-        char buf[1];
         boost::system::error_code ec;
 
-        // 使用 native_handle 直接调用系统 recv，或者用 asio 的非阻塞 receive
-        s->non_blocking(true, ec);
+        static_cast<void>(s->remote_endpoint(ec));
         if (ec)
         {
             return false;
         }
 
-        const auto n = s->receive(boost::asio::buffer(buf, 1),
-                                  tcp::socket::message_peek, ec);
-
-        s->non_blocking(false, ec); // 恢复阻塞模式 (或者根据你的架构保持非阻塞)
-
-        // 1. 如果读到 0 字节，说明对端关闭了连接 (FIN) -> 僵尸
-        if (n == 0 && !ec)
-        {
-            return false;
-        }
-
-        // 2. 如果报错
-        if (ec)
-        {
-            // EAGAIN / EWOULDBLOCK 表示连接正常但没数据 -> 活的
-            if (ec == boost::asio::error::would_block || ec == boost::asio::error::try_again)
-            {
-                return true;
-            }
-            return false;
-        }
-
-        return true;
+        return s->is_open();
     }
 
     /**

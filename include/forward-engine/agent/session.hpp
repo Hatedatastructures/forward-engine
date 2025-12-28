@@ -42,14 +42,14 @@ namespace ngx::agent
 
     private:
 
-        [[nodiscard]] net::awaitable<std::string> read_http_request();
+        [[nodiscard]] net::awaitable<bool> read_http_request(http::request &out_req);
         [[nodiscard]] static std::string_view trim_ascii_space(std::string_view value);
 
         net::awaitable<void> diversion();
         net::awaitable<void> tunnel_tcp();
         net::awaitable<void> handle_http();
         net::awaitable<void> handle_obscura();
-        net::awaitable<void> tunnel_obscura(obscura<tcp> &proto);
+        net::awaitable<void> tunnel_obscura(std::shared_ptr<obscura<tcp>> proto);
         net::awaitable<void> transfer_obscura_to_proto(obscura<tcp> &proto) const;
         net::awaitable<void> transfer_obscura_from_proto(obscura<tcp> &proto) const;
 
@@ -83,8 +83,6 @@ namespace ngx::agent
             {
             }
         }
-
-
 
         net::io_context &io_context_;
         std::shared_ptr<ssl::context> ssl_ctx_;
@@ -321,76 +319,42 @@ namespace ngx::agent
      * @return 读取到的 HTTP 请求字符串
      */
     template <socket_concept Transport>
-    net::awaitable<std::string> session<Transport>::read_http_request()
+    net::awaitable<bool> session<Transport>::read_http_request(http::request &out_req)
     {
-        std::string data;
-        data.reserve(8192);
-
-        std::array<char, 8192> buf{};
-
-        std::optional<std::size_t> header_end;
-        std::optional<std::uint64_t> content_length;
-        bool chunked = false;
-
-        while (true)
+        out_req.clear();
+        try
         {
-            const std::size_t n = co_await adaptation::async_read(client_socket_,net::buffer(buf),
-                                                                  net::use_awaitable);
-            if (n == 0)
+            beast::flat_buffer buffer;
+
+            beast::http::request_parser<beast::http::string_body> parser;
+            parser.body_limit(1024 * 1024);
+            co_await beast::http::async_read(client_socket_, buffer, parser, net::use_awaitable);
+
+            const auto &beast_req = parser.get();
+
+            out_req.method(beast_req.method_string());
+            out_req.target(beast_req.target());
+            out_req.version(beast_req.version());
+
+            for (const auto &field : beast_req)
             {
-                break;
+                out_req.set(field.name_string(), field.value());
             }
 
-            data.append(buf.data(), n);
-
-            if (data.size() > 1024 * 1024)
+            if (!beast_req.body().empty())
             {
-                break;
+                out_req.erase("Transfer-Encoding");
+                out_req.body(beast_req.body());
             }
 
-            if (!header_end)
-            {
-                const std::size_t pos = data.find("\r\n\r\n");
-                if (pos != std::string::npos)
-                {
-                    header_end.emplace(pos + 4);
-                    const std::string_view headers_block(data.data(), pos);
-
-                    std::uint64_t parsed = 0;
-                    if (parse_content_length(headers_block, parsed))
-                    {
-                        content_length.emplace(parsed);
-                    }
-
-                    chunked = chunked || has_chunked_transfer_encoding(headers_block);
-                }
-            }
-
-            if (header_end)
-            {
-                const std::size_t body_start = *header_end;
-                if (content_length)
-                {
-                    if (const std::size_t need = body_start + *content_length; data.size() >= need)
-                    {
-                        break;
-                    }
-                }
-                else if (chunked)
-                {
-                    if (data.find("\r\n0\r\n\r\n", body_start) != std::string::npos)
-                    {
-                        break;
-                    }
-                }
-                else
-                {
-                    break;
-                }
-            }
+            out_req.keep_alive(beast_req.keep_alive());
+            co_return true;
         }
-
-        co_return data;
+        catch (...)
+        {
+            out_req.clear();
+            co_return false;
+        }
     }
 
     /**
@@ -401,13 +365,7 @@ namespace ngx::agent
     net::awaitable<void> session<Transport>::handle_http()
     {
         http::request req;
-        const std::string raw_request = co_await read_http_request();
-        if (raw_request.empty())
-        {
-            co_return;
-        }
-
-        if (!http::deserialize(raw_request, req))
+        if (!co_await read_http_request(req))
         {
             co_return;
         }
@@ -452,55 +410,51 @@ namespace ngx::agent
             co_return;
         }
 
-        net::steady_timer join_timer(io_context_);
-        join_timer.expires_at((net::steady_timer::time_point::max)());
-
-        auto remaining = std::make_shared<std::atomic_int>(2);
-        auto notify_done = [remaining, &join_timer]()
+        auto stop_once = std::make_shared<std::atomic_bool>(false);
+        auto stop_all = [self = this->shared_from_this(), stop_once]() -> net::awaitable<void>
         {
-            if (remaining->fetch_sub(1) == 1)
+            if (stop_once->exchange(true))
             {
-                join_timer.cancel();
+                co_return;
             }
-        };
 
-        auto tunnel_func = [self = this->shared_from_this(), notify_done]() -> net::awaitable<void>
-        {
-            try
+            boost::system::error_code ec;
+            if constexpr (requires { self->client_socket_.is_open(); })
             {
-                if (self->upstream_)
+                if (self->client_socket_.is_open())
                 {
-                    co_await self->transfer_tcp(self->client_socket_, *self->upstream_);
+                    self->client_socket_.shutdown(tcp::socket::shutdown_both, ec);
+                    self->client_socket_.close(ec);
                 }
             }
-            catch (...)
+
+            if (self->upstream_)
             {
+                self->upstream_->shutdown(tcp::socket::shutdown_both, ec);
+                self->upstream_->close(ec);
             }
-            notify_done();
+
+            co_return;
         };
 
-        net::co_spawn(io_context_,tunnel_func,net::detached);
+        auto left_to_right = net::co_spawn(io_context_,
+                                           [self = this->shared_from_this(), stop_all]() -> net::awaitable<void>
+                                           {
+                                               co_await self->transfer_tcp(self->client_socket_, *self->upstream_);
+                                               co_await stop_all();
+                                           },
+                                           net::use_awaitable);
 
-        try
-        {
-            co_await transfer_tcp(*upstream_, client_socket_);
-        }
-        catch (...)
-        {
-        }
-        notify_done();
+        auto right_to_left = net::co_spawn(io_context_,
+                                           [self = this->shared_from_this(), stop_all]() -> net::awaitable<void>
+                                           {
+                                               co_await self->transfer_tcp(*self->upstream_, self->client_socket_);
+                                               co_await stop_all();
+                                           },
+                                           net::use_awaitable);
 
-        boost::system::error_code ec;
-        client_socket_.shutdown(tcp::socket::shutdown_both, ec);
-        client_socket_.close(ec);
-
-        if (upstream_)
-        {
-            upstream_->shutdown(tcp::socket::shutdown_both, ec);
-            upstream_->close(ec);
-        }
-
-        co_await join_timer.async_wait(net::redirect_error(net::use_awaitable, ec));
+        co_await std::move(left_to_right);
+        co_await std::move(right_to_left);
         upstream_.reset();
     }
 
@@ -516,8 +470,8 @@ namespace ngx::agent
             co_return;
         }
 
-        obscura<tcp> proto(std::move(client_socket_), ssl_ctx_, role::server);
-        std::string target_path = co_await proto.handshake();
+        auto proto = std::make_shared<obscura<tcp>>(std::move(client_socket_), ssl_ctx_, role::server);
+        std::string target_path = co_await proto->handshake();
         if (target_path.starts_with('/'))
         {
             target_path.erase(0, 1);
@@ -534,7 +488,7 @@ namespace ngx::agent
             co_return;
         }
 
-        co_await tunnel_obscura(proto);
+        co_await tunnel_obscura(std::move(proto));
     }
 
     /**
@@ -596,62 +550,57 @@ namespace ngx::agent
     * @details 该函数会在客户端和服务器之间建立一个隧道，将 obscura 协议的数据进行加密传输。
     */
     template <socket_concept Transport>
-    net::awaitable<void> session<Transport>::tunnel_obscura(obscura<tcp> &proto)
+    net::awaitable<void> session<Transport>::tunnel_obscura(std::shared_ptr<obscura<tcp>> proto)
     {
-        net::steady_timer join_timer(io_context_);
-        join_timer.expires_at((net::steady_timer::time_point::max)());
-
-        auto remaining = std::make_shared<std::atomic_int>(2);
-        auto notify_done = [remaining, &join_timer]()
+        if (!proto)
         {
-            if (remaining->fetch_sub(1) == 1)
+            co_return;
+        }
+
+        auto stop_once = std::make_shared<std::atomic_bool>(false);
+        auto stop_all = [self = this->shared_from_this(), proto, stop_once]() -> net::awaitable<void>
+        {
+            if (stop_once->exchange(true))
             {
-                join_timer.cancel();
+                co_return;
             }
-        };
 
-        auto tunnel_func = [self = this->shared_from_this(), &proto, notify_done]() -> net::awaitable<void>
-        {
+            boost::system::error_code ec;
+            if (self->upstream_)
+            {
+                self->upstream_->shutdown(tcp::socket::shutdown_both, ec);
+                self->upstream_->close(ec);
+            }
+
             try
             {
-                if (self->upstream_)
-                {
-                    co_await self->transfer_obscura_from_proto(proto);
-                }
+                co_await proto->close();
             }
             catch (...)
             {
             }
-            notify_done();
+
+            co_return;
         };
 
-        net::co_spawn(io_context_,tunnel_func,net::detached);
+        auto obscura_to_upstream = net::co_spawn(io_context_,
+                                                 [self = this->shared_from_this(), proto, stop_all]() -> net::awaitable<void>
+                                                 {
+                                                     co_await self->transfer_obscura_from_proto(*proto);
+                                                     co_await stop_all();
+                                                 },
+                                                 net::use_awaitable);
 
-        try
-        {
-            co_await transfer_obscura_to_proto(proto);
-        }
-        catch (...)
-        {
-        }
-        notify_done();
+        auto upstream_to_obscura = net::co_spawn(io_context_,
+                                                 [self = this->shared_from_this(), proto, stop_all]() -> net::awaitable<void>
+                                                 {
+                                                     co_await self->transfer_obscura_to_proto(*proto);
+                                                     co_await stop_all();
+                                                 },
+                                                 net::use_awaitable);
 
-        boost::system::error_code ec;
-        if (upstream_)
-        {
-            upstream_->shutdown(tcp::socket::shutdown_both, ec);
-            upstream_->close(ec);
-        }
-
-        try
-        {
-            co_await proto.close();
-        }
-        catch (...)
-        {
-        }
-
-        co_await join_timer.async_wait(net::redirect_error(net::use_awaitable, ec));
+        co_await std::move(obscura_to_upstream);
+        co_await std::move(upstream_to_obscura);
         upstream_.reset();
     }
 }
