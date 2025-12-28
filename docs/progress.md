@@ -1,97 +1,49 @@
-<<<<
-# 项目进度文档
+# 项目进度
 
 ## 1. 项目概况
-- **名称**: ForwardEngine
-- **目标**: 基于 C++20 和 Boost.Asio 的高性能通用代理引擎
-- **核心技术**: C++20 Coroutines, Boost.Asio, Boost.Beast, OpenSSL
+- **名称**：ForwardEngine
+- **目标**：基于 C++20 与 Boost.Asio 的通用代理引擎（当前以 TCP/HTTP 为主）
+- **开发环境**：Windows 11 + MinGW（第三方库安装在 `c:/bin`）
+- **核心依赖**：Boost.Asio/Beast、OpenSSL、CMake
 
-## 2. 模块进度
+## 2. 当前实现进度
 
-### 2.1 传输层 (Transport Layer)
-- [x] **Obscura 组件 (`agent/obscura.hpp`)**
-    - [x] 基于 WebSocket 的异步通信封装
-    - [x] 支持服务端 (`role::server`) 和客户端 (`role::client`) 模式
-    - [x] 解决握手阶段数据预读导致的丢失问题 (使用内部 `buffer_`)
-    - [x] 优化 `async_read` 接口，支持外部缓冲区以减少拷贝
-    - [x] 修复 `async_accept` 参数匹配错误
+### 2.1 HTTP 模块（`include/forward-engine/http/*`）
+- [x] `request/response/header` 基础类型
+- [x] 序列化/反序列化（`serialization/deserialization`）
+- [x] 测试：`headers_test`、`request_test`
 
-### 2.2 构建系统 (Build System)
-- [x] CMake 项目结构搭建
-- [x] 静态库 (`forward_engine_static_library`) 配置
-- [x] 测试工程 (`test`) 配置
-- [x] **OpenSSL 依赖配置** (已修复 MinGW 环境下的链接问题)
+### 2.2 Agent（代理主流程，`include/forward-engine/agent/*`）
+- [x] **接入层**：`worker` 负责监听端口并创建会话（`worker.hpp`）
+- [x] **协议识别/目标解析**：`analysis::detect`、`analysis::resolve`（`analysis.hpp/.cpp`）
+- [x] **会话转发**：`session` 支持
+  - HTTP：区分正向/反向代理，建立上游连接并做双向转发（`session.hpp`）
+  - Obscura：握手拿到目标串后走正向连接并转发（`session.hpp` + `obscura.hpp`）
+- [x] **路由/分发**：`distributor` 提供 `route_forward/route_reverse/route_direct`（`distributor.hpp/.cpp`）
+  - 现状：`reverse_map_` 仍是内存结构，未接入配置加载
+- [x] **连接池（当前仅 TCP）**：`source::acquire_tcp` + `internal_ptr` + `deleter` 回收（`connection.hpp/.cpp`）
+  - 现状：按目标端点缓存空闲连接；包含基础“僵尸检测 / 最大空闲时长 / 单端点最大缓存数”
+  - 未实现：UDP 连接缓存、全局 LRU、后台定时清理、跨线程共享/分片池
 
-## 3. 待办事项 (To-Do List)
+### 2.3 Obscura（传输封装，`agent/obscura.hpp`）
+- [x] 基于 Beast WebSocket（含 SSL）的封装：`handshake/async_read/async_write`
+- [ ] 端到端测试：测试工程存在，但当前仍需要把 CTest 目标与产物名完全对齐
 
-### 3.1 近期任务
-- [x] **修复 OpenSSL 链接错误**: 确保在 Windows/MinGW 环境下正确链接 `libssl` 和 `libcrypto`。
-- [ ] **完善测试用例**: 运行 `test/obscura.cpp` 验证双向握手和数据传输。
+### 2.4 日志（`include/forward-engine/log/*`）
+- [x] 协程日志：控制台/文件输出、时间戳、滚动归档（`monitor.hpp/.cpp`）
+- [x] 测试：`log_test`
 
-### 3.2 核心功能开发
-- [ ] **内存池 (Memory Pool)**: 优化 `beast::flat_buffer` 和 I/O 操作的内存分配，减少碎片化。
-- [ ] **多路复用 (Multiplexing)**:
-    - [ ] 设计帧协议 (Frame Protocol)
-    - [ ] 实现流 ID (Stream ID) 映射与会话管理
-- [ ] **协议支持**:
-    - [ ] 探索 QUIC/HTTP3 支持 (基于 UDP 的多路复用)
-    - [ ] 完善 TCP/UDP 代理逻辑
+### 2.5 构建与测试（CMake）
+- [x] 静态库 + 主程序 + 测试工程结构已搭好（根 `CMakeLists.txt`、`src/`、`test/`）
+- [x] MinGW 下 OpenSSL 依赖可配置与编译
+- [x] 已通过测试：`headers_test`、`request_test`、`log_test`、`session_test`
+- [ ] 未通过/未稳定：`connection_test`、`obscura_test`
 
-## 4. 已知问题 (Known Issues)
-- `src/CMakeLists.txt`: 在 Windows MinGW 环境下链接 OpenSSL 时可能会遇到找不到符号的问题，需检查库路径和变量名 (`OPENSSL_LIBRARIES` vs `OpenSSL::SSL`).
-====
-# 项目进度文档
+## 3. 近期待办（按当前缺口）
+- [ ] 修复 `connection_test`：连接复用断言失败（复用未命中）
+- [ ] 修复 `obscura_test`：CTest 目标与可执行产物名对齐并跑通
+- [ ] 反向代理配置加载：把 `configuration.json`（或其它源）接入 `reverse_map_`
+- [ ] 连接池增强（可选）：全局 LRU/定时清理/更严格的健康检查策略
 
-## 1. 项目概况
-- **名称**: forward-engine
-- **目标**: 基于 C++20 和 Boost.Asio 的高性能通用代理引擎
-- **核心技术**: C++20 Coroutines, Boost.Asio, Boost.Beast, OpenSSL
-
-## 2. 模块进度
-
-### 2.1 传输层 (Transport Layer)
-- [x] **Obscura 组件 (`agent/obscura.hpp`)**
-    - [x] 基于 WebSocket 的异步通信封装
-    - [x] 支持服务端 (`role::server`) 和客户端 (`role::client`) 模式
-    - [x] 解决握手阶段数据预读导致的丢失问题 (使用内部 `buffer_`)
-    - [x] 优化 `async_read` 接口，支持外部缓冲区以减少拷贝
-    - [x] 修复 `async_accept` 参数匹配错误
-- [x] **会话管理 (`agent/session.hpp`)**
-    - [x] 实现 `socket_concept` 解耦具体协议
-    - [x] 引入 `socket_bridge` 适配器统一 TCP/UDP 异步接口
-    - [x] 修复变量遮蔽 (Shadowing) 和代码风格问题
-
-### 2.2 连接管理 (Connection Management)
-- [x] **连接池 (`agent/connection.hpp`)**
-    - [x] 实现 TCP/UDP 连接复用
-    - [x] **智能清理**: 实现 LRU (Least Recently Used) 驱逐策略
-    - [x] **僵尸检测**: 基于 `MSG_PEEK` 的非阻塞连接有效性检查 (`is_valid_connection`)
-    - [x] **优雅退出**: 实现 `shutdown()` 打断看门狗循环引用
-    - [x] **分片支持**: 通过 `distributor` 实现连接池分片以减少锁竞争
-
-### 2.3 构建系统 (Build System)
-- [x] CMake 项目结构搭建
-- [x] 静态库 (`forward_engine_static_library`) 配置
-- [x] 测试工程 (`test`) 配置
-- [x] **OpenSSL 依赖配置** (已修复 MinGW 环境下的链接问题)
-- [x] **文档**: 创建详细的 `README.md`
-
-## 3. 待办事项 (To-Do List)
-
-### 3.1 近期任务
-- [x] **修复 OpenSSL 链接错误**: 确保在 Windows/MinGW 环境下正确链接 `libssl` 和 `libcrypto`。
-- [x] **连接池测试**: `test/connection_test.cpp` 通过，覆盖复用、超时、LRU 和分片逻辑。
-- [ ] **Obscura 测试**: 运行 `test/obscura.cpp` 验证双向握手和数据传输。
-
-### 3.2 核心功能开发
-- [ ] **内存池 (Memory Pool)**: 优化 `beast::flat_buffer` 和 I/O 操作的内存分配，减少碎片化。
-- [ ] **多路复用 (Multiplexing)**:
-    - [ ] 设计帧协议 (Frame Protocol)
-    - [ ] 实现流 ID (Stream ID) 映射与会话管理
-- [ ] **协议支持**:
-    - [ ] 探索 QUIC/HTTP3 支持 (基于 UDP 的多路复用)
-    - [ ] 完善 TCP/UDP 代理逻辑 (已完成连接池底层)
-
-## 4. 已知问题 (Known Issues)
-- (无主要已知问题，OpenSSL 链接问题已解决)
->>>>
+## 4. 已知问题
+- 构建目录若混用生成器（例如同一 `build` 目录曾同时被 Ninja 与 MinGW Makefiles 使用），可能导致缓存冲突与文件锁问题；建议按生成器分离构建目录（例如 `build_mingw`）

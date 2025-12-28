@@ -2,9 +2,12 @@
 
 #include <string>
 #include <string_view>
+#include <http.hpp>
 
 namespace ngx::agent
 {
+    namespace http = ngx::http;
+
     /**
      * @brief 协议类型枚举
      * @note 协议类型包括 HTTP 和 Obscura（非 HTTP 流量）。
@@ -14,7 +17,7 @@ namespace ngx::agent
         unknown,
         http,
         obscura // 非 HTTP 流量都归为此类
-    };
+    }; // enum class protocol_type
 
     /**
      * @brief 通过预读的数据判断协议类型
@@ -24,16 +27,23 @@ namespace ngx::agent
 
     struct analysis
     {
-        
-        // 辅助结构：解析后的目标信息
+
+        /**
+         * @brief 解析后的目标信息
+         * @note 包含主机名、端口号和是否为正向代理的标志。
+         */
         struct target
         {
             std::string host;
             std::string port = "80";
-            bool is_forward_proxy = false;
+            bool forward_proxy = false;
         };
 
+        static target resolve(const http::request &req);
+        static target resolve(std::string_view host_port);
         static protocol_type detect(std::string_view peek_data);
-        static void serialization(std::string_view src, std::string &host, std::string &port);
+
+    private:
+        static void parse(std::string_view src, std::string &host, std::string &port);
     }; // class analysis
-}
+} // namespace ngx::agent

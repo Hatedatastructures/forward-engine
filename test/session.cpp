@@ -1,122 +1,141 @@
-#include <http.hpp>
-#include <memory>
-#include <agent/session.hpp>
+#include <agent/connection.hpp>
 #include <agent/distributor.hpp>
-#include <thread>
-#include <log/monitor.hpp>
+#include <agent/session.hpp>
+#include <boost/asio.hpp>
+#include <boost/asio/ssl.hpp>
+#include <array>
 #include <iostream>
+#include <memory>
+#include <string>
+#include <string_view>
+
+namespace net = boost::asio;
+namespace ssl = boost::asio::ssl;
+using tcp = net::ip::tcp;
 
 namespace agent = ngx::agent;
-namespace http = ngx::http;
 
 /**
- * @brief 连接会话测试函数
- * @param io_context `io_context` 上下文
- * @param log_console 日志对象
- * @param server_address 服务器地址
- * @param server_port 服务器端口
- * @return `net::awaitable<void>`
+ * @brief 回显服务器
+ * @param acceptor 监听 acceptor
  */
-auto connect_session(agent::net::io_context &io_context, const std::shared_ptr<ngx::log::coroutine_log> log_console,
-                     const std::string &server_address, const std::uint16_t server_port)
-    -> agent::net::awaitable<void>
+net::awaitable<void> echo_server(tcp::acceptor &acceptor)
 {
-    std::string error_message;
-    try
+    tcp::socket socket = co_await acceptor.async_accept(net::use_awaitable);
+    std::array<char, 8192> buf{};
+    while (true)
     {
-        // 创建 `session` 实例
-        const auto session = std::make_shared<agent::session<agent::tcp::socket>>(io_context);
-
-        // 异步连接到目标服务器
-        co_await session->async_connect(agent::tcp::endpoint(agent::net::ip::make_address(server_address), server_port));
-
-        // 构造 HTTP 请求
-        http::request request;
-        request.method(http::verb::get);
-        request.target("/");
-        request.version(11);
-        request.set(http::field::host, server_address + ":" + std::to_string(server_port));
-        request.set(http::field::user_agent, "ForwardEngine/1.0");
-        request.set(http::field::accept, "*/*");
-
-        // 发送请求
-        co_await session->async_write(http::serialize(request));
-
-        // 异步读取响应数据
-        std::string buffer;
-        co_await session->async_read(buffer);
-
-        if (http::response response; http::deserialize(buffer, response))
+        boost::system::error_code ec;
+        auto token = net::redirect_error(net::use_awaitable, ec);
+        const std::size_t n = co_await socket.async_read_some(net::buffer(buf), token);
+        if (ec || n == 0)
         {
-            co_await log_console->console_write_fmt(ngx::log::level::debug, "收到响应: {}", buffer);
+            break;
         }
-        else
+        co_await net::async_write(socket, net::buffer(buf.data(), n), token);
+        if (ec)
         {
-            co_await log_console->console_write_fmt(ngx::log::level::error, "解析响应失败: {}", buffer);
-        }
-
-        session->close();
-    }
-    catch (const std::exception &e)
-    {
-        error_message = e.what();
-    }
-
-    // 在 catch 块外部处理异常日志，因为 C++20 不允许在 catch 块内使用 co_await
-    if (!error_message.empty())
-    {
-        if (log_console)
-        {
-            co_await log_console->console_write_fmt(ngx::log::level::error, "连接会话发生异常: {}", error_message);
-        }
-        else
-        {
-            std::cerr << "连接会话发生异常: " << error_message << std::endl;
+            break;
         }
     }
-
-    co_return;
 }
 
-// TODO: 添加更多测试用例
+net::awaitable<void> proxy_accept_one(tcp::acceptor &acceptor, agent::net::io_context &ioc,
+    agent::distributor &dist, std::shared_ptr<ssl::context> ssl_ctx)
+{
+    tcp::socket socket = co_await acceptor.async_accept(net::use_awaitable);
+    std::make_shared<agent::session<tcp::socket>>(ioc, std::move(socket), dist, std::move(ssl_ctx))->start();
+}
+
+net::awaitable<void> proxy_connect_client(const tcp::endpoint proxy_ep, const tcp::endpoint echo_ep)
+{
+    tcp::socket socket(co_await net::this_coro::executor);
+    co_await socket.async_connect(proxy_ep, net::use_awaitable);
+
+    const std::string connect_request =
+        "CONNECT 127.0.0.1:" + std::to_string(echo_ep.port()) + " HTTP/1.1\r\n"
+                                                                "Host: 127.0.0.1:" +
+        std::to_string(echo_ep.port()) + "\r\n"
+                                         "\r\n";
+
+    co_await net::async_write(socket, net::buffer(connect_request), net::use_awaitable);
+
+    std::string response;
+    response.reserve(256);
+    std::array<char, 512> buf{};
+    while (response.find("\r\n\r\n") == std::string::npos)
+    {
+        const std::size_t n = co_await socket.async_read_some(net::buffer(buf), net::use_awaitable);
+        if (n == 0)
+        {
+            throw std::runtime_error("proxy response eof");
+        }
+        response.append(buf.data(), n);
+        if (response.size() > 8192)
+        {
+            throw std::runtime_error("proxy response too large");
+        }
+    }
+
+    if (!response.starts_with("HTTP/1.1 200"))
+    {
+        throw std::runtime_error("proxy connect failed: " + response);
+    }
+
+    const std::string payload = "hello_forward_engine";
+    co_await net::async_write(socket, net::buffer(payload), net::use_awaitable);
+
+    std::string echo;
+    echo.resize(payload.size());
+    std::size_t got = 0;
+    while (got < payload.size())
+    {
+        got += co_await socket.async_read_some(net::buffer(echo.data() + got, payload.size() - got), net::use_awaitable);
+    }
+
+    if (echo != payload)
+    {
+        throw std::runtime_error("echo mismatch");
+    }
+
+    boost::system::error_code ec;
+    socket.shutdown(tcp::socket::shutdown_both, ec);
+    socket.close(ec);
+}
+
 int main()
 {
-    std::cout << "测试程序启动..." << std::endl;
-
-    const std::string address = "124.71.136.228";
-
     try
     {
-        constexpr std::uint16_t port = 6779;
-        agent::net::io_context io_context;
-        const auto log_console = std::make_shared<ngx::log::coroutine_log>(io_context.get_executor());
+        agent::net::io_context ioc;
 
-        // 启动协程任务
-        agent::net::co_spawn(io_context, connect_session(io_context, log_console, address, port),
-                             agent::net::detached);
+        agent::source pool(ioc);
+        agent::distributor dist(pool, ioc);
 
-        std::cout << "IO 上下文开始运行..." << std::endl;
+        tcp::acceptor echo_acceptor(ioc, tcp::endpoint(net::ip::make_address("127.0.0.1"), 0));
+        tcp::acceptor proxy_acceptor(ioc, tcp::endpoint(net::ip::make_address("127.0.0.1"), 0));
 
-        auto funcion = [&io_context]()
-        {
-            try
-            {
-                io_context.run();
-            }
-            catch (const std::exception &e)
-            {
-                std::cerr << "IO 线程异常: " << e.what() << std::endl;
-            }
-        };
+        const auto echo_ep = echo_acceptor.local_endpoint();
+        const auto proxy_ep = proxy_acceptor.local_endpoint();
 
-        std::jthread io_thread(funcion);
+        auto ssl_ctx = std::make_shared<ssl::context>(ssl::context::tlsv12);
+        ssl_ctx->set_verify_mode(ssl::verify_none);
+
+        net::co_spawn(ioc, echo_server(echo_acceptor), net::detached);
+        net::co_spawn(ioc, proxy_accept_one(proxy_acceptor, ioc, dist, ssl_ctx), net::detached);
+        net::co_spawn(ioc, [proxy_ep, echo_ep, &ioc]() -> net::awaitable<void>
+                      {
+                          co_await proxy_connect_client(proxy_ep, echo_ep);
+                          ioc.stop(); }, net::detached);
+
+        ioc.run();
     }
     catch (const std::exception &e)
     {
-        std::cerr << "主程序发生异常: " << e.what() << std::endl;
+        std::cerr << "session_test failed: " << e.what() << std::endl;
         return 1;
     }
 
-    std::cout << "测试程序正常退出" << std::endl;
+    std::cout << "session_test passed" << std::endl;
     return 0;
 }

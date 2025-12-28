@@ -3,28 +3,24 @@
 <div align="center">
 
 ![C++20](https://img.shields.io/badge/Standard-C%2B%2B20-blue.svg?logo=c%2B%2B)
-![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux-lightgrey)
+![Platform](https://img.shields.io/badge/Platform-Windows%2011-lightgrey)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Build](https://img.shields.io/badge/Build-CMake-orange)
 
 </div>
 
-**forward_engine** 是一个基于 C++20 协程（Coroutines）和 Concepts 的高性能网络引擎，旨在提供类似 Nginx 的高并发处理能力，同时保持现代 C++ 的开发体验。它专为构建高吞吐量、低延迟的网络应用而设计。
+**ForwardEngine** 是一个基于 C++20 协程与 Boost.Asio 的代理引擎原型工程，当前重点在于把“接入（accept）→ 协议识别 → 路由 → 上游连接 → 双向转发”的主链路跑通，并提供可演进的模块边界。
 
 ---
 
 ## 🚀 核心特性
 
-- **C++20 原生支持**：全面利用 C++20 协程 (`co_await`)、Concepts (`requires`) 和 Ranges 库，代码简洁且类型安全。
-- **高性能异步 I/O**：基于 Boost.Asio 构建，利用各平台的原生异步机制（Windows IOCP, Linux epoll）。
-- **智能连接池**：
-  - 支持 TCP/UDP 连接复用。
-  - 内置 LRU 驱逐策略，自动清理空闲连接。
-  - 僵尸连接自动检测与恢复。
-  - 分片式锁设计（Sharding），大幅降低多线程竞争。
-- **多协议支持**：通过 `obscura` 抽象层，统一支持 TCP, UDP, HTTP, WebSocket 等协议。
-- **跨平台**：完美支持 Windows (MinGW/MSVC) 和 Linux 环境。
-- **高并发架构**：基于 Strand 的无锁编程模型，确保线程安全的同时最大化性能。
+- **C++20 支持**：使用协程（`co_await`）组织异步流程，减少回调嵌套。
+- **异步 I/O**：基于 Boost.Asio/Beast（Windows 11 + MinGW 为主要构建环境）。
+- **HTTP 请求处理**：提供基础的 HTTP `request/response/header` 模型与序列化/反序列化。
+- **代理会话**：支持 HTTP 正向/反向代理的基本转发链路；支持 CONNECT 隧道转发。
+- **连接复用（当前仅 TCP）**：按目标端点缓存空闲连接，并带基础健康检查（僵尸检测/空闲超时/单端点上限）。
+- **Obscura 封装**：基于 Beast WebSocket（含 SSL）的传输包装，提供 `handshake/async_read/async_write` 等接口。
 
 ## 🛠️ 技术栈与依赖
 
@@ -34,14 +30,20 @@
 - **[OpenSSL](https://www.openssl.org/)**: 提供 SSL/TLS 加密支持。
 - **CMake** (3.15+): 构建系统。
 
+依赖默认从 `c:/bin` 查找（见根 `CMakeLists.txt` 中的 `CMAKE_PREFIX_PATH` 与 `OPENSSL_ROOT_DIR` 配置）。
 
+## 🧱 当前模块边界
+- **Agent**：接入与会话调度（`worker/session/analysis`）。
+- **Distributor**：路由与连接获取（`route_forward/route_reverse/route_direct`）。
+- **Connection Pool**：TCP 连接的获取与回收（`source/internal_ptr/deleter`）。
+- **HTTP**：HTTP 类型与编解码（`include/forward-engine/http/*`）。
+- **Obscura**：WebSocket(SSL) 传输封装（`agent/obscura.hpp`）。
+- **Log**：协程日志输出（`log/monitor.hpp`）。
 
-## 🏗️ 架构概览
-
-- **Agent**: 核心代理层，负责网络 I/O 的调度与分发。
-- **Distributor**: 负载均衡器，管理多个连接池分片 (`cache`)，提供高效的资源分配。
-- **Connection Cache**: 智能连接池，维护长连接，处理心跳、超时和驱逐。
-- **Obscura**: 协议混淆与适配层，允许上层业务逻辑与底层传输协议解耦。
+## ✅ 当前已知限制
+- 连接池目前只覆盖 TCP；尚未实现 UDP 缓存、全局 LRU、后台定时清理、跨线程共享/分片池。
+- 反向代理路由表 `reverse_map_` 目前未接入配置加载。
+- 测试用例中 `connection_test`、`obscura_test` 仍处于未稳定状态（详见 `docs/progress.md`）。
 
 ## 📄 许可证
 

@@ -41,24 +41,35 @@ add_executable(session_test
         session.cpp
 )
 
+# 仅保留解决.obj体积的关键选项，无任何多余参数
+target_compile_options(session_test PRIVATE
+        -g1          # 降低调试信息级别，减小.obj体积
+        -O1          # 轻度优化，折叠重复模板代码
+        -fno-keep-inline-dllexport # 辅助减少冗余符号（可选）
+)
+
+# 链接阶段无需加任何额外参数，删掉所有-Wl,--large-address-aware
+# target_link_options(session_test PRIVATE ...)  # 清空这部分错误配置
+
 target_link_libraries(session_test
         PRIVATE
         ${PROJECT_NAME}_static_library
+
 )
 
 add_test(NAME session_test COMMAND session_test)
 
 # obscura 测试可执行程序
-add_executable(obscura_test
+add_executable(obscura_test_exec
         obscura.cpp
 )
 
-target_link_libraries(obscura_test
+target_link_libraries(obscura_test_exec
         PRIVATE
         ${PROJECT_NAME}_static_library
 )
 
-add_test(NAME obscura_test COMMAND obscura_test)
+add_test(NAME obscura_test COMMAND obscura_test_exec)
 
 # connection 测试可执行程序
 add_executable(connection_test

@@ -3,20 +3,14 @@
 #include <unordered_map>
 #include <memory>
 #include <string>
-#include <variant>
 #include <boost/asio.hpp>
 #include "obscura.hpp"
-#include "session.hpp"
 #include "connection.hpp"
 #include <limit/blacklist.hpp>
 
 namespace ngx::agent
 {
     namespace net = boost::asio;
-
-    using tcp_pointer = std::shared_ptr<session<net::ip::tcp::socket>>;
-    using udp_pointer = std::shared_ptr<session<net::ip::udp::socket>>;
-    using connection_type = std::variant<tcp_pointer, udp_pointer>;
 
     /**
      * @brief 分发容器

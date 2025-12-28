@@ -20,8 +20,18 @@ namespace ngx::agent
             : ioc_(1),                   // 1. 初始化 IO 上下文 (hint=1 表示单线程)
               pool_(ioc_),               // 2. 初始化连接池 (依赖 ioc)
               distributor_(pool_, ioc_), // 3. 初始化路由器 (依赖 pool 和 ioc)
-              acceptor_(ioc_)            // 4. 初始化接收器
+              ssl_ctx_(std::make_shared<net::ssl::context>(net::ssl::context::tlsv12)),
+              acceptor_(ioc_) // 4. 初始化接收器
         {
+            try
+            {
+                ssl_ctx_->use_certificate_chain_file("cert.pem");
+                ssl_ctx_->use_private_key_file("key.pem", net::ssl::context::pem);
+            }
+            catch (...)
+            {
+            }
+
             auto endpoint = tcp::endpoint(tcp::v4(), port);
             acceptor_.open(endpoint.protocol());
             acceptor_.set_option(net::socket_base::reuse_address(true));
@@ -53,7 +63,8 @@ namespace ngx::agent
                         std::make_shared<session<tcp::socket>>(
                             ioc_,
                             std::move(socket),
-                            distributor_)
+                            distributor_,
+                            ssl_ctx_)
                             ->start();
                     }
                     do_accept();
@@ -63,6 +74,7 @@ namespace ngx::agent
         net::io_context ioc_;
         source pool_;             // 资源仓库
         distributor distributor_; // 业务大脑
+        std::shared_ptr<net::ssl::context> ssl_ctx_;
         tcp::acceptor acceptor_;
     };
 
