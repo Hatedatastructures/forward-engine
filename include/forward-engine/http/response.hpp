@@ -51,6 +51,7 @@ namespace ngx::http
         void keep_alive(bool value) noexcept;
         [[nodiscard]] bool empty() const noexcept;
         [[nodiscard]] const headers &header() const noexcept;
+        [[nodiscard]] headers &header() noexcept;
 
     private:
         enum status status_{status::ok};

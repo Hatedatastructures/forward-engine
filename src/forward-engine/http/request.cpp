@@ -385,4 +385,14 @@ namespace ngx::http
         return headers_;
     }
 
+    /**
+     * @brief 获取请求头字段
+     * @details 该函数用于获取 HTTP 请求的头字段
+     * @return 请求头字段对象引用
+     */
+    headers &request::header() noexcept
+    {
+        return headers_;
+    }
+
 } // namespace ngx::http

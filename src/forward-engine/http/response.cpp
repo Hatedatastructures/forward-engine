@@ -459,4 +459,14 @@ namespace ngx::http
         return headers_;
     }
 
+    /**
+     * @brief 获取响应头字段容器
+     * @details 该函数用于获取 HTTP 响应的头字段容器，用于直接访问和操作头字段。
+     */
+    headers &response::header() noexcept
+    {
+        return headers_;
+    }
+
+
 } // namespace ngx::http

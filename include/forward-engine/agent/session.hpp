@@ -7,10 +7,8 @@
 #include <array>
 #include <cctype>
 #include <charconv>
-#include <optional>
 #include <atomic>
 #include <boost/asio.hpp>
-#include <boost/beast.hpp>
 #include "analysis.hpp"
 #include "obscura.hpp"
 #include "connection.hpp"
@@ -87,7 +85,7 @@ namespace ngx::agent
         net::io_context &io_context_;
         std::shared_ptr<ssl::context> ssl_ctx_;
         distributor &distributor_;
-        socket_type client_socket_;
+        socket_type client_socket_; // 客户端连接   
         internal_ptr upstream_;
     }; // class session
 }
@@ -365,25 +363,27 @@ namespace ngx::agent
     net::awaitable<void> session<Transport>::handle_http()
     {
         http::request req;
-        if (!co_await read_http_request(req))
+        const bool success = co_await http::deserialize(client_socket_, req);
+
+        if (!success)
         {
             co_return;
         }
 
+
+        //  连接上游
         if (const auto [host, port, forward_proxy] = analysis::resolve(req); forward_proxy)
         {
             upstream_ = co_await distributor_.route_forward(host, port);
-        }
-        else
+        } 
+        else 
         {
             upstream_ = co_await distributor_.route_reverse(host);
         }
+        
+        if (!upstream_) co_return;
 
-        if (!upstream_ || !upstream_->is_open())
-        {
-            co_return;
-        }
-
+        // 转发
         if (req.method() == http::verb::connect)
         {
             const std::string resp = "HTTP/1.1 200 Connection Established\r\n\r\n";
@@ -391,8 +391,9 @@ namespace ngx::agent
         }
         else
         {
-            const std::string upstream_data = http::serialize(req);
-            co_await net::async_write(*upstream_, net::buffer(upstream_data), net::use_awaitable);
+            // 序列化发送
+            std::string data = http::serialize(req);
+            co_await net::async_write(*upstream_, net::buffer(data), net::use_awaitable);
         }
 
         co_await tunnel_tcp();
