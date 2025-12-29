@@ -142,11 +142,16 @@ namespace ngx::agent
     {
         try
         {
-            std::array<char, 24> peek_buf{};
-            auto snoop_buffer = net::buffer(peek_buf);
-            auto n = co_await client_socket_.async_receive(snoop_buffer, tcp::socket::message_peek, net::use_awaitable);
+            // 1. 偷看数据 (Peek)
+            std::array<char, 24> peek_buf;
+            auto buf = net::buffer(peek_buf);
+            // 循环 peek 确保至少读到一点数据，避免误判
+            size_t n = co_await client_socket_.async_receive(buf, tcp::socket::message_peek, net::use_awaitable);
 
+            // 2. 识别协议 (调用 analysis)
             const auto type = analysis::detect(std::string_view(peek_buf.data(), n));
+
+            // 3. 分流
             if (type == protocol_type::http)
             {
                 co_await handle_http();
@@ -363,7 +368,7 @@ namespace ngx::agent
     net::awaitable<void> session<Transport>::handle_http()
     {
         http::request req;
-        const bool success = co_await http::deserialize(client_socket_, req);
+        const bool success = co_await http::async_read(client_socket_, req);
 
         if (!success)
         {

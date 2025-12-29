@@ -16,7 +16,7 @@ namespace ngx::agent
     {
     public:
         // 构造函数：初始化所有线程局部资源
-        explicit worker(unsigned short port)
+        explicit worker(const unsigned short port, const std::string &cert, const std::string &key)
             : ioc_(1),                   // 1. 初始化 IO 上下文 (hint=1 表示单线程)
               pool_(ioc_),               // 2. 初始化连接池 (依赖 ioc)
               distributor_(pool_, ioc_), // 3. 初始化路由器 (依赖 pool 和 ioc)
@@ -25,8 +25,8 @@ namespace ngx::agent
         {
             try
             {
-                ssl_ctx_->use_certificate_chain_file("cert.pem");
-                ssl_ctx_->use_private_key_file("key.pem", net::ssl::context::pem);
+                ssl_ctx_->use_certificate_chain_file(cert);
+                ssl_ctx_->use_private_key_file(key, net::ssl::context::pem);
             }
             catch (...)
             {

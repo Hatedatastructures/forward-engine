@@ -1,15 +1,16 @@
-#include <http.hpp>
 #include <agent.hpp>
 #include <memory>
-#include <agent/session.hpp>
-#include <agent/distributor.hpp>
 #include <thread>
 #include <log/monitor.hpp>
 #include <iostream>
 
 namespace agent = ngx::agent;
 namespace http = ngx::http;
-namespace net = ngx::agent::net;
+namespace net = agent::net;
+
+constexpr  std::string_view cert_path = "C:\\Users\\C1373\\Desktop\\ForwardEngine\\cert.pem";
+constexpr  std::string_view key_path = "C:\\Users\\C1373\\Desktop\\ForwardEngine\\key.pem";
+
 
 // TODO: add more tests
 int main()
@@ -26,9 +27,10 @@ int main()
     for (unsigned int i = 0; i < threads_count; ++i)
     {
         threads.emplace_back([port]
-                             {
-            ngx::agent::worker w(port);
-            w.run(); });
+        {
+            agent::worker w(port,{cert_path.data()},{key_path.data()});
+            w.run();
+        });
     }
 
     // 3. 等待线程结束

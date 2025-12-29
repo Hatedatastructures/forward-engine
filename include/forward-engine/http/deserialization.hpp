@@ -28,7 +28,7 @@ namespace ngx::http
      * @return true 读取成功, false 读取失败 (连接断开或协议错误)
      */
     template <class Transport>
-    net::awaitable<bool> deserialize(Transport& socket, request& request_instance)
+    net::awaitable<bool> async_read(Transport& socket, request& request_instance)
     {
         boost::beast::http::request_parser<boost::beast::http::string_body> parser;
 
@@ -78,7 +78,7 @@ namespace ngx::http
      * @return true 读取成功, false 读取失败 (连接断开或协议错误)
      */
     template <class Transport>
-    net::awaitable<bool> deserialize(Transport& socket, response& response_instance)
+    net::awaitable<bool> async_read(Transport& socket, response& response_instance)
     {
         boost::beast::http::response_parser<boost::beast::http::string_body> parser;
 
@@ -100,7 +100,7 @@ namespace ngx::http
 
         // 窃取信息填充 response 对象
         response_instance.version(beast_msg.version());
-        response_instance.status(beast_msg.result());
+        response_instance.status(static_cast<status>(beast_msg.result()));
         for (const auto& field : beast_msg)
         {
             response_instance.header().construct(std::string(field.name_string()), std::string(field.value()));

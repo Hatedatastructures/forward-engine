@@ -73,6 +73,13 @@ add_executable(${PROJECT_NAME}
         main.cpp
 )
 
+target_compile_options(${PROJECT_NAME} PRIVATE
+        -g1          # 降低调试信息级别，减小.obj体积
+        -O1          # 轻度优化，折叠重复模板代码
+        -fno-keep-inline-dllexport # 辅助减少冗余符号（可选）
+)
+
+
 target_link_libraries(${PROJECT_NAME}
         PRIVATE
         ${PROJECT_NAME}_static_library
