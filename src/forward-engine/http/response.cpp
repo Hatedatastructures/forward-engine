@@ -333,6 +333,12 @@ namespace ngx::http
         content_length(static_cast<std::uint64_t>(body_.size()));
     }
 
+    void response::body(memory::string &&body_value)
+    {
+        body_ = std::move(body_value);
+        content_length(static_cast<std::uint64_t>(body_.size()));
+    }
+
     /**
      * @brief 获取响应体
      * @details 该函数用于获取 HTTP 响应的体内容

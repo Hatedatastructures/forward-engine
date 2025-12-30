@@ -6,6 +6,7 @@
 
 #include <http/serialization.hpp>
 #include <http/deserialization.hpp>
+#include <memory/container.hpp>
 #include <agent/obscura.hpp>
 #include <iostream>
 #include <string>
@@ -29,7 +30,7 @@ void serialization()
 
     req.set(http::field::content_type, "application/json");
 
-    req.body(R"({"name":"test","age":18})");
+    req.body(memory::string(R"({"name":"test","age":18})"));
 
     req.keep_alive(true);
 

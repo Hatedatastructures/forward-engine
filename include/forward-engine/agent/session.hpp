@@ -42,10 +42,6 @@ namespace ngx::agent
         void close();
 
     private:
-
-        [[nodiscard]] net::awaitable<bool> read_http_request(http::request &out_req);
-        [[nodiscard]] static std::string_view trim_ascii_space(std::string_view value);
-
         net::awaitable<void> diversion();
         net::awaitable<void> tunnel_tcp();
         net::awaitable<void> handle_http();
@@ -53,11 +49,6 @@ namespace ngx::agent
         net::awaitable<void> tunnel_obscura(std::shared_ptr<obscura<tcp>> proto);
         net::awaitable<void> transfer_obscura_to_proto(obscura<tcp> &proto) const;
         net::awaitable<void> transfer_obscura_from_proto(obscura<tcp> &proto) const;
-
-        static bool equals_ignore(std::string_view left, std::string_view right);
-        static bool parse_content_length(std::string_view headers_block, std::uint64_t &out_length);
-        static bool has_chunked_transfer_encoding(std::string_view headers_block);
-
         /**
          * @brief 从源读取数据并写入目标
          * @param from 源
@@ -174,199 +165,6 @@ namespace ngx::agent
     }
 
     /**
-     * @brief 移除字符串首尾的 ASCII 空格字符
-     * @param value 输入字符串
-     * @return 移除空格后的字符串视图
-     */
-    template <socket_concept Transport>
-    std::string_view session<Transport>::trim_ascii_space(std::string_view value)
-    {
-        while (!value.empty() && (value.front() == ' ' || value.front() == '\t'))
-        {
-            value.remove_prefix(1);
-        }
-
-        while (!value.empty() && (value.back() == ' ' || value.back() == '\t'))
-        {
-            value.remove_suffix(1);
-        }
-
-        return value;
-    }
-
-    /**
-     * @brief 忽略大小写比较两个字符串是否相等
-     * @param left 左字符串
-     * @param right 右字符串
-     * @return 如果两个字符串忽略大小写相等，返回 true；否则返回 false
-     */
-    template <socket_concept Transport>
-    bool session<Transport>::equals_ignore(const std::string_view left, const std::string_view right)
-    {
-        if (left.size() != right.size())
-        {
-            return false;
-        }
-
-        for (std::size_t i = 0; i < left.size(); ++i)
-        {
-            const auto l = static_cast<unsigned char>(left[i]);
-            const auto r = static_cast<unsigned char>(right[i]);
-            if (std::tolower(l) != std::tolower(r))
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /**
-     * @brief 解析 Content-Length 头字段
-     * @param headers_block HTTP 头块
-     * @param out_length 解析出的内容长度
-     * @return 如果解析成功，返回 true；否则返回 false
-     */
-    template <socket_concept Transport>
-    bool session<Transport>::parse_content_length(const std::string_view headers_block, std::uint64_t &out_length)
-    {
-        std::size_t offset = 0;
-        while (offset < headers_block.size())
-        {
-            const std::size_t line_end = headers_block.find("\r\n", offset);
-            const std::size_t end = (line_end == std::string_view::npos) ? headers_block.size() : line_end;
-            const std::string_view line = headers_block.substr(offset, end - offset);
-            offset = (line_end == std::string_view::npos) ? headers_block.size() : (line_end + 2);
-
-            if (line.empty())
-            {
-                continue;
-            }
-
-            const std::size_t colon_pos = line.find(':');
-            if (colon_pos == std::string_view::npos)
-            {
-                continue;
-            }
-
-            const std::string_view name = trim_ascii_space(line.substr(0, colon_pos));
-            if (!equals_ignore(name, "Content-Length"))
-            {
-                continue;
-            }
-
-            const std::string_view value = trim_ascii_space(line.substr(colon_pos + 1));
-            std::uint64_t length_value = 0;
-            const auto result = std::from_chars(value.data(), value.data() + value.size(), length_value);
-            if (result.ec != std::errc{})
-            {
-                return false;
-            }
-
-            out_length = length_value;
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * @brief 检查是否存在分块传输编码
-     * @param headers_block HTTP 头块
-     * @return 如果存在分块传输编码，返回 true；否则返回 false
-     */
-    template <socket_concept Transport>
-    bool session<Transport>::has_chunked_transfer_encoding(const std::string_view headers_block)
-    {
-        std::size_t offset = 0;
-        while (offset < headers_block.size())
-        {
-            const std::size_t line_end = headers_block.find("\r\n", offset);
-            const std::size_t end = (line_end == std::string_view::npos) ? headers_block.size() : line_end;
-            const std::string_view line = headers_block.substr(offset, end - offset);
-            offset = (line_end == std::string_view::npos) ? headers_block.size() : (line_end + 2);
-
-            if (line.empty())
-            {
-                continue;
-            }
-
-            const std::size_t colon_pos = line.find(':');
-            if (colon_pos == std::string_view::npos)
-            {
-                continue;
-            }
-
-            const std::string_view name = trim_ascii_space(line.substr(0, colon_pos));
-            if (!equals_ignore(name, "Transfer-Encoding"))
-            {
-                continue;
-            }
-
-            const std::string_view value = trim_ascii_space(line.substr(colon_pos + 1));
-            std::size_t value_offset = 0;
-            while (value_offset < value.size())
-            {
-                const std::size_t comma_pos = value.find(',', value_offset);
-                const std::size_t token_end = (comma_pos == std::string_view::npos) ? value.size() : comma_pos;
-                const std::string_view token = trim_ascii_space(value.substr(value_offset, token_end - value_offset));
-                if (!token.empty() && equals_ignore(token, "chunked"))
-                {
-                    return true;
-                }
-                value_offset = (comma_pos == std::string_view::npos) ? value.size() : (comma_pos + 1);
-            }
-            return false;
-        }
-
-        return false;
-    }
-
-    /**
-     * @brief 读取 HTTP 请求
-     * @details 该函数会从客户端套接字中读取 HTTP 请求，直到完整读取或发生错误。
-     * @return 读取到的 HTTP 请求字符串
-     */
-    template <socket_concept Transport>
-    net::awaitable<bool> session<Transport>::read_http_request(http::request &out_req)
-    {
-        out_req.clear();
-        try
-        {
-            beast::flat_buffer buffer;
-
-            beast::http::request_parser<beast::http::string_body> parser;
-            parser.body_limit(1024 * 1024);
-            co_await beast::http::async_read(client_socket_, buffer, parser, net::use_awaitable);
-
-            const auto &beast_req = parser.get();
-
-            out_req.method(beast_req.method_string());
-            out_req.target(beast_req.target());
-            out_req.version(beast_req.version());
-
-            for (const auto &field : beast_req)
-            {
-                out_req.set(field.name_string(), field.value());
-            }
-
-            if (!beast_req.body().empty())
-            {
-                out_req.erase("Transfer-Encoding");
-                out_req.body(beast_req.body());
-            }
-
-            out_req.keep_alive(beast_req.keep_alive());
-            co_return true;
-        }
-        catch (...)
-        {
-            out_req.clear();
-            co_return false;
-        }
-    }
-
-    /**
      * @brief 处理HTTP请求
      * @details 该函数会从客户端读取HTTP请求，并根据请求类型进行相应的处理。
      */
@@ -375,7 +173,7 @@ namespace ngx::agent
     {
         pool_.release();
         http::request req(&pool_);
-        const bool success = co_await http::async_read(client_socket_, req);
+        const bool success = co_await http::async_read(client_socket_, req, &pool_);
 
         if (!success)
         {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string_view>
+#include <memory_resource>
 
 #include <boost/asio.hpp>
 #include <boost/beast/http.hpp>
@@ -11,6 +12,9 @@
 
 namespace ngx::http
 {
+    using memory_allocator = std::pmr::polymorphic_allocator<char>;
+    using http_body = boost::beast::http::basic_string_body<char, std::char_traits<char>, memory_allocator>;
+
     namespace net = boost::asio;
     /**
      * @brief 反序列化 HTTP 请求
@@ -28,10 +32,18 @@ namespace ngx::http
      * @return true 读取成功, false 读取失败 (连接断开或协议错误)
      */
     template <class Transport>
-    net::awaitable<bool> async_read(Transport &socket, request &request_instance)
+    net::awaitable<bool> async_read(Transport &socket, request &request_instance, std::pmr::memory_resource *mr)
     {
+        if (!mr)
+        {
+            mr = std::pmr::get_default_resource();
+        }
+
         request_instance.clear();
-        boost::beast::http::request_parser<boost::beast::http::string_body> parser;
+        using request_parser = boost::beast::http::request_parser<http_body>;
+
+        request_parser parser;
+        parser.get().body() = http_body::value_type(memory_allocator{mr});
 
         boost::beast::flat_buffer buffer;
         parser.header_limit(16 * 1024); 
@@ -46,10 +58,9 @@ namespace ngx::http
             co_return false;
         }
 
-        // 这一步是“零拷贝”的关键，使用 std::move 转移所有权
-        const auto &beast_msg = parser.get();
+        auto beast_msg = parser.release();
 
-        // 窃取信息填充 request 对象
+        // 填充 request 对象
         request_instance.method(beast_msg.method_string());
         request_instance.target(beast_msg.target());
         request_instance.version(beast_msg.version());
@@ -60,7 +71,7 @@ namespace ngx::http
 
         if (!beast_msg.body().empty())
         {
-            request_instance.body(beast_msg.body());
+            request_instance.body(std::move(beast_msg.body()));
         }
 
         request_instance.keep_alive(beast_msg.keep_alive());
@@ -84,10 +95,18 @@ namespace ngx::http
      * @return true 读取成功, false 读取失败 (连接断开或协议错误)
      */
     template <class Transport>
-    net::awaitable<bool> async_read(Transport &socket, response &response_instance)
+    net::awaitable<bool> async_read(Transport &socket, response &response_instance, std::pmr::memory_resource *mr)
     {
+        if (!mr)
+        {
+            mr = std::pmr::get_default_resource();
+        }
+
         response_instance.clear();
-        boost::beast::http::response_parser<boost::beast::http::string_body> parser;
+        using response_parser = boost::beast::http::response_parser<http_body>;
+
+        response_parser parser;
+        parser.get().body() = http_body::value_type(memory_allocator{mr});
 
         boost::beast::flat_buffer buffer;
         parser.header_limit(16 * 1024); 
@@ -102,10 +121,9 @@ namespace ngx::http
             co_return false;
         }
 
-        // 这一步是“零拷贝”的关键，使用 std::move 转移所有权
-        const auto &beast_msg = parser.get();
+        auto beast_msg = parser.release();
 
-        // 窃取信息填充 response 对象
+        // 填充 response 对象
         response_instance.version(beast_msg.version());
         response_instance.status(static_cast<status>(beast_msg.result()));
         for (const auto &field : beast_msg)
@@ -115,7 +133,7 @@ namespace ngx::http
 
         if (!beast_msg.body().empty())
         {
-            response_instance.body(beast_msg.body());
+            response_instance.body(std::move(beast_msg.body()));
         }
 
         response_instance.keep_alive(beast_msg.keep_alive());

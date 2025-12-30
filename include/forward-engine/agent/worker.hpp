@@ -5,6 +5,8 @@
 #include <agent/distributor.hpp> // 下一步要写的路由器
 #include <agent/session.hpp>     // 最后一步要写的会话
 #include <memory>
+#include <thread>
+#include <vector>
 
 namespace ngx::agent
 {
@@ -30,6 +32,7 @@ namespace ngx::agent
             }
             catch (...)
             {
+                ssl_ctx_.reset();
             }
 
             auto endpoint = tcp::endpoint(tcp::v4(), port);
@@ -45,10 +48,37 @@ namespace ngx::agent
             acceptor_.listen();
         }
 
+        void load_reverse_map(const std::string &file_path)
+        {
+            distributor_.load_reverse_map(file_path);
+        }
+
         void run()
         {
-            do_accept(); // 启动接收
-            ioc_.run();  // 启动循环 (卡住线程)
+            run(1);
+        }
+
+        void run(std::size_t threads_count)
+        {
+            if (threads_count == 0)
+            {
+                threads_count = 1;
+            }
+
+            do_accept();
+
+            std::vector<std::jthread> threads;
+            threads.reserve(threads_count > 0 ? threads_count - 1 : 0);
+
+            for (std::size_t i = 1; i < threads_count; ++i)
+            {
+                threads.emplace_back([this]
+                {
+                    ioc_.run();
+                });
+            }
+
+            ioc_.run();
         }
 
     private:

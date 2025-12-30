@@ -259,6 +259,12 @@ namespace ngx::http
         content_length(static_cast<std::uint64_t>(body_.size()));
     }
 
+    void request::body(memory::string &&body_value)
+    {
+        body_ = std::move(body_value);
+        content_length(static_cast<std::uint64_t>(body_.size()));
+    }
+
     /**
      * @brief 获取请求体
      * @details 该函数用于获取 HTTP 请求的请求体

@@ -39,6 +39,7 @@ namespace ngx::http
         [[nodiscard]] std::string_view at(field name) const noexcept;
 
         void body(std::string_view body);
+        void body(memory::string &&body);
         [[nodiscard]] std::string_view body() const noexcept;
 
         void content_length(std::uint64_t length);

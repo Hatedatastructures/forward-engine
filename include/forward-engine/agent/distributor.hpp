@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <functional>
+#include <string>
 #include <string_view>
 #include <memory_resource>
 #include <memory/container.hpp>
@@ -65,6 +66,7 @@ namespace ngx::agent
 
     public:
         explicit distributor(source &pool, net::io_context &ioc, std::pmr::memory_resource *mr = std::pmr::new_delete_resource());
+        void load_reverse_map(const std::string &file_path);
         [[nodiscard]] net::awaitable<internal_ptr> route_reverse(std::string_view host);
         [[nodiscard]] net::awaitable<internal_ptr> route_direct(tcp::endpoint ep) const;
         [[nodiscard]] net::awaitable<internal_ptr> route_forward(std::string_view host, std::string_view port);
