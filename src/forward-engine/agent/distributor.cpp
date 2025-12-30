@@ -2,16 +2,18 @@
 
 namespace ngx::agent
 {
-   distributor::distributor(source &pool, net::io_context &ioc)
-       : pool_(pool), resolver_(ioc) {}
+   distributor::distributor(source &pool, net::io_context &ioc, std::pmr::memory_resource *mr)
+       : pool_(pool), resolver_(ioc), mr_(mr ? mr : std::pmr::new_delete_resource()), reverse_map_(mr_)
+   {
+   }
 
    /**
     * @brief 给 HTTP 正向代理用 (查 DNS)
     * @param host 目标主机名
-    * @param port 目标端口号
-    * @return 一个指向内部连接对象的智能指针
-    */
-   net::awaitable<internal_ptr> distributor::route_forward(const std::string host, const std::string port)
+   * @param port 目标端口号
+   * @return 一个指向内部连接对象的智能指针
+   */
+   net::awaitable<internal_ptr> distributor::route_forward(const std::string_view host, const std::string_view port)
    {
       // 1. 查 DNS
       if (blacklist_.domain(host))
@@ -25,10 +27,10 @@ namespace ngx::agent
 
    /**
     * @brief 给 HTTP 反向代理用 (查静态表)
-    * @param host 目标主机名
-    * @return 一个指向内部连接对象的智能指针
-    */
-   net::awaitable<internal_ptr> distributor::route_reverse(std::string host)
+   * @param host 目标主机名
+   * @return 一个指向内部连接对象的智能指针
+   */
+   net::awaitable<internal_ptr> distributor::route_reverse(const std::string_view host)
    {
       // 1. 查配置表 (比如 configuration.json 加载进来的 map)
       if (auto it = reverse_map_.find(host); it != reverse_map_.end())

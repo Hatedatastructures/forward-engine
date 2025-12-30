@@ -35,6 +35,7 @@ set(FORWARD_LIB_SOURCES
         ../include/forward-engine/agent/adaptation.hpp
         ../include/forward-engine/agent/analysis.hpp
         forward-engine/agent/analysis.cpp
+        ../include/forward-engine/memory/container.hpp
 )
 
 # 创建静态库
@@ -46,6 +47,7 @@ add_library(${PROJECT_NAME}_static_library STATIC
 target_include_directories(${PROJECT_NAME}_static_library
         PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/include/forward-engine
         ${boost_include_dir}
         ${Boost_INCLUDE_DIRS}

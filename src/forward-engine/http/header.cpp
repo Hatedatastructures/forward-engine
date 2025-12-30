@@ -1,8 +1,16 @@
 #include <http/header.hpp>
+#include <cctype>
+#include <iterator>
 
 namespace ngx::http
 {
-    downcase_string::downcase_string(std::string_view str)
+    downcase_string::downcase_string(std::pmr::memory_resource *mr)
+        : str_(mr)
+    {
+    }
+
+    downcase_string::downcase_string(std::string_view str, std::pmr::memory_resource *mr)
+        : str_(mr)
     {
         str_.reserve(str.size());
         std::ranges::transform(str, std::back_inserter(str_), ::tolower);
@@ -10,9 +18,9 @@ namespace ngx::http
 
     /**
      * @brief 获取 downcase_string 的原始字符串值
-     * @return const std::string& 原始字符串值
+     * @return const memory::string& 原始字符串值
      */
-    const std::string &downcase_string::value() const
+    const memory::string &downcase_string::value() const
     {
         return str_;
     }
@@ -31,9 +39,26 @@ namespace ngx::http
         return str_ == other.str_;
     }
 
-    headers::header::header(const std::string_view name, const std::string_view value)
-        : key(name), value(value), original_key(name)
+    headers::header::header(std::pmr::memory_resource *mr)
+        : key(mr), value(mr), original_key(mr)
     {
+    }
+
+    headers::header::header(const std::string_view name, const std::string_view value, std::pmr::memory_resource *mr)
+        : key(name, mr), value(mr), original_key(mr)
+    {
+        this->value.assign(value.begin(), value.end());
+        this->original_key.assign(name.begin(), name.end());
+    }
+
+    headers::headers(std::pmr::memory_resource *mr)
+        : entries_(mr)
+    {
+    }
+
+    std::pmr::memory_resource *headers::resource() const noexcept
+    {
+        return entries_.get_allocator().resource();
     }
 
     /**
@@ -77,9 +102,9 @@ namespace ngx::http
      * @param name 原始字符串键
      * @return downcase_string 转换后的 downcase_string 键
      */
-    downcase_string headers::make_key(const std::string_view name)
+    downcase_string headers::make_key(const std::string_view name) const
     {
-        return downcase_string{name};
+        return downcase_string{name, resource()};
     }
 
     /**
@@ -89,7 +114,7 @@ namespace ngx::http
      */
     void headers::construct(std::string_view name, std::string_view value)
     {
-        entries_.emplace_back(name, value);
+        entries_.emplace_back(name, value, resource());
     }
 
     /**
@@ -98,7 +123,7 @@ namespace ngx::http
      */
     void headers::construct(const header &entry)
     {
-        entries_.push_back(entry);
+        construct(std::string_view{entry.original_key}, std::string_view{entry.value});
     }
 
     /**
@@ -135,14 +160,14 @@ namespace ngx::http
         }
     }
 
-    bool headers::erase(std::string_view name)
+    bool headers::erase(const std::string_view name)
     {
         if (entries_.empty())
         {
             return false;
         }
 
-        downcase_string key = make_key(name);
+        const downcase_string key = make_key(name);
         const auto old_size = entries_.size();
 
         std::erase_if(entries_, [&](const header &entry) { return entry.key == key; });

@@ -4,25 +4,16 @@ namespace ngx::http
 {
     namespace
     {
-        /**
-         * @brief 将 HTTP 版本号转换为字符串
-         * @details 内部工具函数，用于将 `request` 或 `response` 中保存的
-         * `11`、`10` 形式的版本号转换为 `1.1`、`1.0` 形式的字符串。
-         * @param version_value 内部版本数值
-         * @return std::string HTTP 版本数字字符串
-         */
-        [[nodiscard]] std::string to_version_string(const unsigned int version_value)
+        void append_version_string(memory::string &out, const unsigned int version_value)
         {
             unsigned int major = version_value / 10;
             unsigned int minor = version_value % 10;
 
-            std::string version_string;
-            version_string.reserve(4);
-            version_string.push_back(static_cast<char>('0' + static_cast<char>(major)));
-            version_string.push_back('.');
-            version_string.push_back(static_cast<char>('0' + static_cast<char>(minor)));
-
-            return version_string;
+            char version_buffer[3]{};
+            version_buffer[0] = static_cast<char>('0' + static_cast<char>(major));
+            version_buffer[1] = '.';
+            version_buffer[2] = static_cast<char>('0' + static_cast<char>(minor));
+            out.append(version_buffer, 3);
         }
 
         /**
@@ -65,19 +56,12 @@ namespace ngx::http
             }
         }
 
-        /**
-         * @brief 解析响应原因短语
-         * @details 优先使用 `response` 中显式设置的原因短语，如果为空，则根据
-         * 状态码生成一个标准的 `HTTP` 原因短语。
-         * @param response_instance 响应对象实例
-         * @return std::string 响应原因短语字符串
-         */
-        [[nodiscard]] std::string resolve_response_reason(const response &response_instance)
+        [[nodiscard]] std::string_view resolve_response_reason_view(const response &response_instance) noexcept
         {
             const std::string_view reason_view = response_instance.reason();
             if (!reason_view.empty())
             {
-                return std::string{reason_view};
+                return reason_view;
             }
 
             switch (response_instance.status())
@@ -148,23 +132,22 @@ namespace ngx::http
         }
     } // namespace
 
-    std::string serialize(const request &request_instance)
+    memory::string serialize(const request &request_instance, std::pmr::memory_resource *mr)
     {
         const std::string_view method_string = resolve_request_method_string(request_instance);
-        const std::string &target_string = request_instance.target();
-        const std::string version_string = to_version_string(request_instance.version());
+        const auto &target_string = request_instance.target();
 
         const headers &header_container = request_instance.header();
         const std::string_view body_view = request_instance.body();
 
-        std::string result;
+        memory::string result(mr);
         result.reserve(128 + target_string.size() + static_cast<std::size_t>(header_container.size() * 32) + body_view.size());
 
-        result.append(method_string.begin(), method_string.end());
+        result.append(method_string.data(), method_string.size());
         result.push_back(' ');
         result.append(target_string);
         result.append(" HTTP/");
-        result.append(version_string);
+        append_version_string(result, request_instance.version());
         result.append("\r\n");
 
         for (const auto &header_entry : header_container)
@@ -184,17 +167,16 @@ namespace ngx::http
 
         if (!body_view.empty())
         {
-            result.append(body_view.begin(), body_view.end());
+            result.append(body_view.data(), body_view.size());
         }
 
         return result;
     }
 
-    std::string serialize(const response &response_instance)
+    memory::string serialize(const response &response_instance, std::pmr::memory_resource *mr)
     {
-        const std::string version_string = to_version_string(response_instance.version());
         const unsigned int status_code_value = response_instance.status_code();
-        const std::string reason_string = resolve_response_reason(response_instance);
+        const std::string_view reason_view = resolve_response_reason_view(response_instance);
 
         const headers &header_container = response_instance.header();
         const std::string_view body_view = response_instance.body();
@@ -211,15 +193,15 @@ namespace ngx::http
             status_buffer_end += 3;
         }
 
-        std::string result;
+        memory::string result(mr);
         result.reserve(128 + static_cast<std::size_t>(header_container.size() * 32) + body_view.size());
 
         result.append("HTTP/");
-        result.append(version_string);
+        append_version_string(result, response_instance.version());
         result.push_back(' ');
         result.append(status_buffer, status_buffer_end);
         result.push_back(' ');
-        result.append(reason_string);
+        result.append(reason_view.data(), reason_view.size());
         result.append("\r\n");
 
         for (const auto &header_entry : header_container)
@@ -239,7 +221,7 @@ namespace ngx::http
 
         if (!body_view.empty())
         {
-            result.append(body_view.begin(), body_view.end());
+            result.append(body_view.data(), body_view.size());
         }
 
         return result;

@@ -92,7 +92,7 @@ void test_iteration()
     h.construct("Header2", "Value2");
     h.construct("Header3", "Value3");
 
-    std::vector<std::pair<std::string, std::string>> expected = {
+    const std::vector<std::pair<std::string_view, std::string_view>> expected = {
         {"header1", "Value1"},
         {"header2", "Value2"},
         {"header3", "Value3"}};
@@ -100,8 +100,8 @@ void test_iteration()
     size_t count = 0;
     for (const auto &entry : h)
     {
-        assert(entry.key.value() == expected[count].first);
-        assert(entry.value == expected[count].second);
+        assert(entry.key.view() == expected[count].first);
+        assert(std::string_view(entry.value) == expected[count].second);
         count++;
     }
     assert(count == 3);

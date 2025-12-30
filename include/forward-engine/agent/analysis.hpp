@@ -1,7 +1,8 @@
 #pragma once
 
-#include <string>
 #include <string_view>
+#include <memory_resource>
+#include <memory/container.hpp>
 #include <http.hpp>
 
 namespace ngx::agent
@@ -34,16 +35,22 @@ namespace ngx::agent
          */
         struct target
         {
-            std::string host;
-            std::string port = "80";
-            bool forward_proxy = false;
+            explicit target(std::pmr::memory_resource *mr = std::pmr::get_default_resource())
+                : host(mr), port(mr)
+            {
+                port.assign("80");
+            }
+
+            memory::string host;
+            memory::string port;
+            bool forward_proxy{false};
         };
 
-        static target resolve(const http::request &req);
-        static target resolve(std::string_view host_port);
+        static target resolve(const http::request &req, std::pmr::memory_resource *mr = nullptr);
+        static target resolve(std::string_view host_port, std::pmr::memory_resource *mr = nullptr);
         static protocol_type detect(std::string_view peek_data);
 
     private:
-        static void parse(std::string_view src, std::string &host, std::string &port);
+        static void parse(std::string_view src, memory::string &host, memory::string &port);
     }; // class analysis
 } // namespace ngx::agent

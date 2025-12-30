@@ -5,10 +5,13 @@
 #include <string>
 #include <string_view>
 #include <array>
+#include <cstddef>
 #include <cctype>
 #include <charconv>
 #include <atomic>
+#include <memory_resource>
 #include <boost/asio.hpp>
+#include <memory/container.hpp>
 #include "analysis.hpp"
 #include "obscura.hpp"
 #include "connection.hpp"
@@ -87,6 +90,9 @@ namespace ngx::agent
         distributor &distributor_;
         socket_type client_socket_; // 客户端连接   
         internal_ptr upstream_;
+
+        std::array<std::byte, 16384> buffer_{};
+        std::pmr::monotonic_buffer_resource pool_;
     }; // class session
 }
 
@@ -96,7 +102,7 @@ namespace ngx::agent
     session<Transport>::session(net::io_context &io_context, socket_type socket, distributor &dist,
         std::shared_ptr<ssl::context> ssl_ctx)
     : io_context_(io_context), ssl_ctx_(std::move(ssl_ctx)), distributor_(dist),
-    client_socket_(std::move(socket)) {}
+    client_socket_(std::move(socket)), pool_(buffer_.data(), buffer_.size()) {}
 
     template <socket_concept Transport>
     session<Transport>::~session()
@@ -367,7 +373,8 @@ namespace ngx::agent
     template <socket_concept Transport>
     net::awaitable<void> session<Transport>::handle_http()
     {
-        http::request req;
+        pool_.release();
+        http::request req(&pool_);
         const bool success = co_await http::async_read(client_socket_, req);
 
         if (!success)
@@ -377,13 +384,14 @@ namespace ngx::agent
 
 
         //  连接上游
-        if (const auto [host, port, forward_proxy] = analysis::resolve(req); forward_proxy)
+        const auto target = analysis::resolve(req);
+        if (target.forward_proxy)
         {
-            upstream_ = co_await distributor_.route_forward(host, port);
+            upstream_ = co_await distributor_.route_forward(target.host, target.port);
         } 
         else 
         {
-            upstream_ = co_await distributor_.route_reverse(host);
+            upstream_ = co_await distributor_.route_reverse(target.host);
         }
         
         if (!upstream_) co_return;
@@ -397,7 +405,7 @@ namespace ngx::agent
         else
         {
             // 序列化发送
-            std::string data = http::serialize(req);
+            const auto data = http::serialize(req, &pool_);
             co_await net::async_write(*upstream_, net::buffer(data), net::use_awaitable);
         }
 
@@ -476,13 +484,14 @@ namespace ngx::agent
             co_return;
         }
 
+        pool_.release();
         auto proto = std::make_shared<obscura<tcp>>(std::move(client_socket_), ssl_ctx_, role::server);
         std::string target_path = co_await proto->handshake();
         if (target_path.starts_with('/'))
         {
             target_path.erase(0, 1);
         }
-        const auto target = analysis::resolve(std::string_view(target_path));
+        const auto target = analysis::resolve(std::string_view(target_path), &pool_);
         if (target.host.empty())
         {
             co_return;

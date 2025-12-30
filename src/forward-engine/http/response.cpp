@@ -1,4 +1,4 @@
-﻿#include <http/response.hpp>
+#include <http/response.hpp>
 #include <charconv>
 
 namespace ngx::http
@@ -164,6 +164,11 @@ namespace ngx::http
             }
         }
     } // namespace
+
+    response::response(std::pmr::memory_resource *mr)
+        : reason_(mr), body_(mr), headers_(mr)
+    {
+    }
 
     /**
      * @brief 设置响应状态码

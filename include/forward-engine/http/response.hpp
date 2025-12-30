@@ -1,8 +1,9 @@
 #pragma once
 
-#include <string>
 #include <string_view>
 #include <cstdint>
+#include <memory_resource>
+#include <memory/container.hpp>
 #include "header.hpp"
 #include "constants.hpp"
 
@@ -15,7 +16,7 @@ namespace ngx::http
     class response
     {
     public:
-        response() = default;
+        explicit response(std::pmr::memory_resource *mr = std::pmr::get_default_resource());
         response(const response &other) = default;
         response &operator=(const response &other) = default;
         ~response() = default;
@@ -55,8 +56,8 @@ namespace ngx::http
 
     private:
         enum status status_{status::ok};
-        std::string reason_;
-        std::string body_;
+        memory::string reason_;
+        memory::string body_;
         headers headers_;
         unsigned int version_{11};
         bool keep_alive_{false};

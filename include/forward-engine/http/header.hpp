@@ -1,10 +1,11 @@
 #pragma once
-#include <string>
+#include <cstddef>
+#include <functional>
 #include <string_view>
-#include <vector>
 #include <ranges>
 #include <algorithm>
-
+#include <memory_resource>
+#include <memory/container.hpp>
 namespace ngx::http
 {
     /**
@@ -15,8 +16,8 @@ namespace ngx::http
     class downcase_string
     {
     public:
-        downcase_string() = default;
-        explicit downcase_string(std::string_view str);
+        explicit downcase_string(std::pmr::memory_resource *mr = std::pmr::get_default_resource());
+        explicit downcase_string(std::string_view str, std::pmr::memory_resource *mr = std::pmr::get_default_resource());
 
         downcase_string(const downcase_string &other) = default;
         downcase_string &operator=(const downcase_string &other) = default;
@@ -24,19 +25,19 @@ namespace ngx::http
         ~downcase_string() = default;
         bool operator==(const downcase_string &other) const;
 
-        [[nodiscard]] const std::string& value() const;
+        [[nodiscard]] const memory::string &value() const;
         [[nodiscard]] std::string_view view() const;
 
         struct hash
         {
             std::size_t operator()(const downcase_string &str) const
             {
-                return std::hash<std::string>{}(str.value());
+                return std::hash<std::string_view>{}(str.view());
             } 
         }; // struct hash
 
     private:
-        std::string str_;
+        memory::string str_;
     }; // class downcase_string
 
 
@@ -52,18 +53,18 @@ namespace ngx::http
         struct header
         {
             downcase_string key;
-            std::string value;
-            std::string original_key;
+            memory::string value;
+            memory::string original_key;
 
-            header() = default;
-            header(std::string_view name, std::string_view value);
+            explicit header(std::pmr::memory_resource *mr = std::pmr::get_default_resource());
+            header(std::string_view name, std::string_view value, std::pmr::memory_resource *mr = std::pmr::get_default_resource());
         }; // struct header
 
         using size_type = std::size_t;
-        using container_type = std::vector<header>;
+        using container_type = memory::vector<header>;
         using iterator = container_type::const_iterator;
 
-        headers() = default;
+        explicit headers(std::pmr::memory_resource *mr = std::pmr::get_default_resource());
         headers(const headers &other) = default;
         headers &operator=(const headers &other) = default;
         ~headers() = default;
@@ -88,7 +89,8 @@ namespace ngx::http
         [[nodiscard]] iterator end() const;
 
     private:
-        static downcase_string make_key(std::string_view name);
+        [[nodiscard]] std::pmr::memory_resource *resource() const noexcept;
+        [[nodiscard]] downcase_string make_key(std::string_view name) const;
 
         container_type entries_;
     }; // class headers

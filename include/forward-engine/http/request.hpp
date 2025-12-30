@@ -1,8 +1,8 @@
 #pragma once
 
-#include <string>
 #include <string_view>
-#include <cstdint>
+#include <memory_resource>
+#include <memory/container.hpp>
 #include "constants.hpp"
 #include "header.hpp"
 
@@ -15,7 +15,7 @@ namespace ngx::http
     class request
     {
     public:
-        request() = default;
+        explicit request(std::pmr::memory_resource *mr = std::pmr::get_default_resource());
         request(const request &other) = default;
         request &operator=(const request &other) = default;
         ~request() = default;
@@ -26,7 +26,7 @@ namespace ngx::http
         [[nodiscard]] std::string_view method_string() const noexcept;
 
         void target(std::string_view target);
-        [[nodiscard]] const std::string &target() const noexcept;
+        [[nodiscard]] const memory::string &target() const noexcept;
 
         void version(unsigned int value);
         [[nodiscard]] unsigned int version() const noexcept;
@@ -56,9 +56,9 @@ namespace ngx::http
 
     private:
         verb method_{verb::get};
-        std::string method_string_;
-        std::string target_;
-        std::string body_;
+        memory::string method_string_;
+        memory::string target_;
+        memory::string body_;
         headers headers_;
         unsigned int version_{11};
         bool keep_alive_{false};

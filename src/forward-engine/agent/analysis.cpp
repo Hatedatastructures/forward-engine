@@ -5,6 +5,15 @@ namespace ngx::agent
 {
     namespace
     {
+        [[nodiscard]] std::pmr::memory_resource *resolve_mr(const http::request &req, std::pmr::memory_resource *mr) noexcept
+        {
+            if (mr)
+            {
+                return mr;
+            }
+            return req.target().get_allocator().resource();
+        }
+
         /**
          * @brief 解析绝对 URI
          * @param uri 要解析的 URI
@@ -14,7 +23,7 @@ namespace ngx::agent
          * @return 如果解析成功，返回 true；否则返回 false
          * @details 支持 HTTP 和 HTTPS 协议。
          */
-        bool parse_absolute_uri(std::string_view uri, std::string &host, std::string &port, std::string &path)
+        bool parse_absolute_uri(std::string_view uri, memory::string &host, memory::string &port, memory::string &path)
         {
             std::string_view working = uri;
             std::string_view scheme;
@@ -40,11 +49,11 @@ namespace ngx::agent
 
             if (scheme == "https")
             {
-                port = "443";
+                port.assign("443");
             }
             else
             {
-                port = "80";
+                port.assign("80");
             }
 
             if (const auto pos = authority.find(':'); pos != std::string_view::npos)
@@ -96,9 +105,9 @@ namespace ngx::agent
      * @param req HTTP 请求对象
      * @return target 解析后的目标信息
      */
-    analysis::target analysis::resolve(const http::request &req)
+    analysis::target analysis::resolve(const http::request &req, std::pmr::memory_resource *mr)
     {
-        target t;
+        target t(resolve_mr(req, mr));
 
         // A. 检查 CONNECT (HTTPS 正向代理)
         if (req.method() == http::verb::connect)
@@ -106,13 +115,13 @@ namespace ngx::agent
             t.forward_proxy = true;
             parse(req.target(), t.host, t.port);
             if (t.port == "80")
-                t.port = "443";
+                t.port.assign("443");
         }
         // B. 检查 http:// (HTTP 正向代理)
         else if (req.target().starts_with("http://") || req.target().starts_with("https://"))
         {
             t.forward_proxy = true;
-            std::string path;
+            memory::string path(t.host.get_allocator().resource());
             parse_absolute_uri(req.target(), t.host, t.port, path);
         }
         // C. 普通请求 (反向代理)
@@ -126,20 +135,20 @@ namespace ngx::agent
         return t;
     }
 
-    analysis::target analysis::resolve(const std::string_view host_port)
+    analysis::target analysis::resolve(const std::string_view host_port, std::pmr::memory_resource *mr)
     {
-        target t;
+        target t(mr ? mr : std::pmr::get_default_resource());
         t.forward_proxy = true;
         parse(host_port, t.host, t.port);
         return t;
     }
 
-    void analysis::parse(const std::string_view src, std::string &host, std::string &port)
+    void analysis::parse(const std::string_view src, memory::string &host, memory::string &port)
     {
         if (const auto pos = src.find(':'); pos != std::string_view::npos)
         {
-            host = std::string(src.substr(0, pos));
-            port = std::string(src.substr(pos + 1));
+            host.assign(src.substr(0, pos).begin(), src.substr(0, pos).end());
+            port.assign(src.substr(pos + 1).begin(), src.substr(pos + 1).end());
             if (port.empty())
             {
                 port.assign("80");
@@ -147,7 +156,7 @@ namespace ngx::agent
         }
         else
         {
-            host = std::string(src);
+            host.assign(src.begin(), src.end());
         }
     }
 }

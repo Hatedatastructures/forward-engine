@@ -102,6 +102,11 @@ namespace ngx::http
         }
     } // namespace
 
+    request::request(std::pmr::memory_resource *mr)
+        : method_string_(mr), target_(mr), body_(mr), headers_(mr)
+    {
+    }
+
     /**
      * @brief 设置请求方法
      * @details 该函数用于设置 HTTP 请求的方法
@@ -160,7 +165,7 @@ namespace ngx::http
      * @details 该函数用于获取 HTTP 请求的目标 URI，包括路径和查询参数。
      * @return 请求目标 URI 字符串引用
      */
-    const std::string &request::target() const noexcept
+    const memory::string &request::target() const noexcept
     {
         return target_;
     }

@@ -28,8 +28,9 @@ namespace ngx::http
      * @return true 读取成功, false 读取失败 (连接断开或协议错误)
      */
     template <class Transport>
-    net::awaitable<bool> async_read(Transport& socket, request& request_instance)
+    net::awaitable<bool> async_read(Transport &socket, request &request_instance)
     {
+        request_instance.clear();
         boost::beast::http::request_parser<boost::beast::http::string_body> parser;
 
         boost::beast::flat_buffer buffer;
@@ -46,18 +47,23 @@ namespace ngx::http
         }
 
         // 这一步是“零拷贝”的关键，使用 std::move 转移所有权
-        const auto& beast_msg = parser.get();
+        const auto &beast_msg = parser.get();
 
         // 窃取信息填充 request 对象
-        request_instance.method(std::string(beast_msg.method_string()));
-        request_instance.target(std::string(beast_msg.target()));
+        request_instance.method(beast_msg.method_string());
+        request_instance.target(beast_msg.target());
         request_instance.version(beast_msg.version());
-        for (const auto& field : beast_msg)
+        for (const auto &field : beast_msg)
         {
-            request_instance.header().construct(std::string(field.name_string()), std::string(field.value()));
+            request_instance.set(field.name_string(), field.value());
         }
 
-        request_instance.body() = std::move(const_cast<std::string&>(beast_msg.body()));
+        if (!beast_msg.body().empty())
+        {
+            request_instance.body(beast_msg.body());
+        }
+
+        request_instance.keep_alive(beast_msg.keep_alive());
 
         co_return true;
     }
@@ -78,8 +84,9 @@ namespace ngx::http
      * @return true 读取成功, false 读取失败 (连接断开或协议错误)
      */
     template <class Transport>
-    net::awaitable<bool> async_read(Transport& socket, response& response_instance)
+    net::awaitable<bool> async_read(Transport &socket, response &response_instance)
     {
+        response_instance.clear();
         boost::beast::http::response_parser<boost::beast::http::string_body> parser;
 
         boost::beast::flat_buffer buffer;
@@ -96,17 +103,22 @@ namespace ngx::http
         }
 
         // 这一步是“零拷贝”的关键，使用 std::move 转移所有权
-        const auto& beast_msg = parser.get();
+        const auto &beast_msg = parser.get();
 
         // 窃取信息填充 response 对象
         response_instance.version(beast_msg.version());
         response_instance.status(static_cast<status>(beast_msg.result()));
-        for (const auto& field : beast_msg)
+        for (const auto &field : beast_msg)
         {
-            response_instance.header().construct(std::string(field.name_string()), std::string(field.value()));
+            response_instance.set(field.name_string(), field.value());
         }
 
-        response_instance.body() = std::move(const_cast<std::string&>(beast_msg.body()));
+        if (!beast_msg.body().empty())
+        {
+            response_instance.body(beast_msg.body());
+        }
+
+        response_instance.keep_alive(beast_msg.keep_alive());
 
         co_return true;
     }

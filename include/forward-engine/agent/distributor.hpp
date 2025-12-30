@@ -1,8 +1,10 @@
 #pragma once
 
-#include <unordered_map>
 #include <memory>
-#include <string>
+#include <functional>
+#include <string_view>
+#include <memory_resource>
+#include <memory/container.hpp>
 #include <boost/asio.hpp>
 #include "obscura.hpp"
 #include "connection.hpp"
@@ -18,15 +20,60 @@ namespace ngx::agent
      */
     class distributor
     {
+        struct transparent_string_hash
+        {
+            using is_transparent = void;
+
+            std::size_t operator()(const std::string_view value) const noexcept
+            {
+                return std::hash<std::string_view>{}(value);
+            }
+
+            std::size_t operator()(const memory::string &value) const noexcept
+            {
+                return std::hash<std::string_view>{}(std::string_view(value));
+            }
+        }; // struct transparent_string_hash
+
+        struct transparent_string_equal
+        {
+            using is_transparent = void;
+
+            bool operator()(const std::string_view left, const std::string_view right) const noexcept
+            {
+                return left == right;
+            }
+
+            bool operator()(const memory::string &left, const std::string_view right) const noexcept
+            {
+                return std::string_view(left) == right;
+            }
+
+            bool operator()(const std::string_view left, const memory::string &right) const noexcept
+            {
+                return left == std::string_view(right);
+            }
+
+            bool operator()(const memory::string &left, const memory::string &right) const noexcept
+            {
+                return left == right;
+            }
+        }; // struct transparent_string_equal
+
+        template <typename Key, typename Value>
+        using unordered_map = memory::unordered_map<Key, Value, transparent_string_hash, transparent_string_equal>;
+
     public:
-        explicit distributor(source &pool, net::io_context &ioc);
-        [[nodiscard]] net::awaitable<internal_ptr> route_reverse(std::string host);
+        explicit distributor(source &pool, net::io_context &ioc, std::pmr::memory_resource *mr = std::pmr::new_delete_resource());
+        [[nodiscard]] net::awaitable<internal_ptr> route_reverse(std::string_view host);
         [[nodiscard]] net::awaitable<internal_ptr> route_direct(tcp::endpoint ep) const;
-        [[nodiscard]] net::awaitable<internal_ptr> route_forward(std::string host, std::string port);
+        [[nodiscard]] net::awaitable<internal_ptr> route_forward(std::string_view host, std::string_view port);
     private:
+
         source &pool_;
         tcp::resolver resolver_;
         limit::blacklist blacklist_;
-        std::unordered_map<std::string, tcp::endpoint> reverse_map_;
+        std::pmr::memory_resource *mr_;
+        unordered_map<memory::string, tcp::endpoint> reverse_map_;
     }; // class distributor
 }
