@@ -36,6 +36,10 @@ set(FORWARD_LIB_SOURCES
         ../include/forward-engine/agent/analysis.hpp
         forward-engine/agent/analysis.cpp
         ../include/forward-engine/memory/container.hpp
+        ../include/forward-engine/abnormal/deviant.hpp
+        ../include/forward-engine/abnormal/security.hpp
+        ../include/forward-engine/abnormal/network.hpp
+        ../include/forward-engine/abnormal/protocol.hpp
 )
 
 # 创建静态库

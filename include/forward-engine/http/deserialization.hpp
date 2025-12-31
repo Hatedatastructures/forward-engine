@@ -42,7 +42,7 @@ namespace ngx::http
         request_instance.clear();
         using request_parser = boost::beast::http::request_parser<http_body>;
 
-        request_parser parser;
+        request_parser parser(std::piecewise_construct, std::make_tuple(memory_allocator{mr}));
         parser.get().body() = http_body::value_type(memory_allocator{mr});
 
         boost::beast::flat_buffer buffer;
@@ -105,7 +105,7 @@ namespace ngx::http
         response_instance.clear();
         using response_parser = boost::beast::http::response_parser<http_body>;
 
-        response_parser parser;
+        response_parser parser(std::piecewise_construct, std::make_tuple(memory_allocator{mr}));
         parser.get().body() = http_body::value_type(memory_allocator{mr});
 
         boost::beast::flat_buffer buffer;
