@@ -30,7 +30,7 @@ void serialization()
 
     req.set(http::field::content_type, "application/json");
 
-    req.body(memory::string(R"({"name":"test","age":18})"));
+    // req.body(memory::string("({"name":"test","age":18})"));
 
     req.keep_alive(true);
 

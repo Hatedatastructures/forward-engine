@@ -8,8 +8,12 @@ namespace ngx::abnormal
     {
     public:
         template <typename... Args>
-        explicit network_error(std::format_string<Args...> fmt, Args&&... args,
-                               const std::source_location& loc = std::source_location::current())
+        explicit network_error(std::format_string<Args...> fmt, Args&&... args)
+            : exception(std::source_location::current(), fmt, std::forward<Args>(args)...)
+        {}
+
+        template <typename... Args>
+        explicit network_error(const std::source_location& loc, std::format_string<Args...> fmt, Args&&... args)
             : exception(loc, fmt, std::forward<Args>(args)...)
         {}
 

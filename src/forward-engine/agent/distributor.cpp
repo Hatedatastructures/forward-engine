@@ -2,6 +2,7 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <stdexcept>
+#include <abnormal.hpp>
 
 namespace ngx::agent
 {
@@ -75,7 +76,7 @@ namespace ngx::agent
       // 1. 查 DNS
       if (blacklist_.domain(host))
       {
-         throw std::runtime_error("Domain blacklisted");
+         throw abnormal::network_error(std::format("Domain blacklisted: {}, port: {}",host,port));
       }
       const auto results = co_await resolver_.async_resolve(host, port, net::use_awaitable);
       // 2. 找池子要连接
@@ -94,7 +95,7 @@ namespace ngx::agent
       {
          co_return co_await pool_.acquire_tcp(it->second);
       }
-      throw std::runtime_error("Unknown host");
+      throw abnormal::network_error("Unknown host: {}", std::string_view(host));
    }
 
    /**

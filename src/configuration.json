@@ -12,6 +12,7 @@
         "addressable": {
             "host": "localhost",
             "port": 8081
-        }
+        },
+        "clash":false
     }
 }

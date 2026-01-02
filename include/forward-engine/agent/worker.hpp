@@ -81,7 +81,7 @@ namespace ngx::agent
             ioc_.run();
         }
 
-    private:
+    private:    
         void do_accept()
         {
             acceptor_.async_accept(

@@ -40,6 +40,8 @@ set(FORWARD_LIB_SOURCES
         ../include/forward-engine/abnormal/security.hpp
         ../include/forward-engine/abnormal/network.hpp
         ../include/forward-engine/abnormal/protocol.hpp
+        ../include/forward-engine/abnormal.hpp
+        ../include/forward-engine/core/configuration.hpp
 )
 
 # 创建静态库
