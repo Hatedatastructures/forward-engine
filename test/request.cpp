@@ -43,8 +43,6 @@ void serialization()
 
 void deserialization()
 {
-    http::request req;
-
     const std::string request_str =
         "POST /api/v1/user HTTP/1.1\r\n"
         "Host: example.com\r\n"
@@ -55,7 +53,7 @@ void deserialization()
         "\r\n"
         "{\"name\":\"test\",\"age\":18}";
 
-    if (http::deserialize(request_str, req))
+    if (http::request req; http::deserialize(request_str, req))
     {
         std::cout << "request" << std::endl;
         std::cout << http::serialize(req) << std::endl << std::endl << std::endl;
@@ -65,7 +63,6 @@ void deserialization()
         std::cout << "deserialize failed" << std::endl;
     }
 
-    http::response resp;
     const std::string response_str =
         "HTTP/1.1 200 OK\r\n"
         "Host: example.com\r\n"
@@ -75,7 +72,7 @@ void deserialization()
         "\r\n"
         "{\"name\":\"test\",\"age\":18}";
 
-    if (http::deserialize(response_str, resp))
+    if (http::response resp; http::deserialize(response_str, resp))
     {
         std::cout << "response" << std::endl;
         std::cout << http::serialize(resp) << std::endl;

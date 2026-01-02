@@ -19,6 +19,7 @@
 - [x] **会话转发**：`session` 支持
   - HTTP：区分正向/反向代理，建立上游连接并做双向转发（`session.hpp`）
   - Obscura：握手拿到目标串后走正向连接并转发（`session.hpp` + `obscura.hpp`）
+  - 隧道取消：双向转发使用 `cancellation_signal/slot` 通知对向优雅退出，避免靠强制 `close()` 打断导致误报（`session.hpp`）
 - [x] **路由/分发**：`distributor` 提供 `route_forward/route_reverse/route_direct`（`distributor.hpp/.cpp`）
   - 现状：`reverse_map_` 仍是内存结构，未接入配置加载
 - [x] **连接池（当前仅 TCP）**：`source::acquire_tcp` + `internal_ptr` + `deleter` 回收（`connection.hpp/.cpp`）
@@ -27,7 +28,7 @@
 
 ### 2.3 Obscura（传输封装，`agent/obscura.hpp`）
 - [x] 基于 Beast WebSocket（含 SSL）的封装：`handshake/async_read/async_write`
-- [ ] 端到端测试：测试工程存在，但当前仍需要把 CTest 目标与产物名完全对齐
+- [x] 端到端测试：`obscura_test` 已接入 CTest 并可运行（产物名 `obscura_test_exec`）
 
 ### 2.4 日志（`include/forward-engine/log/*`）
 - [x] 协程日志：控制台/文件输出、时间戳、滚动归档（`monitor.hpp/.cpp`）
@@ -36,12 +37,12 @@
 ### 2.5 构建与测试（CMake）
 - [x] 静态库 + 主程序 + 测试工程结构已搭好（根 `CMakeLists.txt`、`src/`、`test/`）
 - [x] MinGW 下 OpenSSL 依赖可配置与编译
-- [x] 已通过测试：`headers_test`、`request_test`、`log_test`、`session_test`
-- [ ] 未通过/未稳定：`connection_test`、`obscura_test`
+- [x] 已通过测试：`headers_test`、`request_test`、`log_test`、`session_test`、`connection_test`、`obscura_test`
+  - `session_test` 覆盖：正常转发 + 上游先断/客户端先断的双向退出语义
+- [ ] 待稳定：`obscura_test`（测试用证书/路径与更多异常场景）
 
 ## 3. 近期待办（按当前缺口）
-- [ ] 修复 `connection_test`：连接复用断言失败（复用未命中）
-- [ ] 修复 `obscura_test`：CTest 目标与可执行产物名对齐并跑通
+- [ ] 稳定 `obscura_test`：去除绝对路径依赖，补充异常场景用例
 - [ ] 反向代理配置加载：把 `configuration.json`（或其它源）接入 `reverse_map_`
 - [ ] 连接池增强（可选）：全局 LRU/定时清理/更严格的健康检查策略
 

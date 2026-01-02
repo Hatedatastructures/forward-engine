@@ -24,7 +24,7 @@ set(FORWARD_LIB_SOURCES
         ../include/forward-engine/agent/connection.hpp
         ../include/forward-engine/agent/obscura.hpp
         ../include/forward-engine/agent/session.hpp
-        ../include/forward-engine/limit/blacklist.hpp
+        ../include/forward-engine/rule/blacklist.hpp
         ../include/forward-engine/http.hpp
         ../include/forward-engine/http/constants.hpp
         ../include/forward-engine/core/broker.hpp

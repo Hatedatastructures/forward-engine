@@ -9,7 +9,7 @@
 #include <boost/asio.hpp>
 #include "obscura.hpp"
 #include "connection.hpp"
-#include <limit/blacklist.hpp>
+#include <rule/blacklist.hpp>
 
 namespace ngx::agent
 {

@@ -40,8 +40,9 @@ namespace ngx::agent
         void close();
 
     private:
-        using cslot = net::cancellation_slot;
         using mutable_buf = net::mutable_buffer;
+        using cancellation_slot = net::cancellation_slot;
+        using cancellation_signal = net::cancellation_signal;
 
         /**
          * @brief 判断 `boost::system::error_code` 是否属于“正常收尾”
@@ -96,8 +97,8 @@ namespace ngx::agent
         net::awaitable<void> handle_obscura();
 
         net::awaitable<void> tunnel_obscura(std::shared_ptr<obscura<tcp>> proto);
-        net::awaitable<void> transfer_obscura(obscura<tcp> &proto, cslot cancel_slot) const;
-        net::awaitable<void> transfer_obscura(obscura<tcp> &proto, cslot cancel_slot, mutable_buf buffer) const;
+        net::awaitable<void> transfer_obscura(obscura<tcp> &proto, cancellation_slot cancel_slot) const;
+        net::awaitable<void> transfer_obscura(obscura<tcp> &proto, cancellation_slot cancel_slot, mutable_buf buffer) const;
         
         /**
          * @brief 从源读取数据并写入目标
@@ -109,7 +110,7 @@ namespace ngx::agent
          * 该函数不会使用 `close()` 来中断读写，而是依赖 `cancellation_slot` 触发的优雅取消。
          */
         template <typename Source, typename Dest>
-        net::awaitable<void> transfer_tcp(Source &from, Dest &to, cslot cancel_slot, mutable_buf buffer)
+        net::awaitable<void> transfer_tcp(Source &from, Dest &to, cancellation_slot cancel_slot, mutable_buf buffer)
         {
             boost::system::error_code ec;
             auto token = net::bind_cancellation_slot(cancel_slot, net::redirect_error(net::use_awaitable, ec));
@@ -288,7 +289,7 @@ namespace ngx::agent
             boost::system::error_code ec;
             auto token = net::redirect_error(net::use_awaitable, ec);
             const std::string resp = "HTTP/1.1 200 Connection Established\r\n\r\n";
-            co_await net::async_write(client_socket_, net::buffer(resp), token);
+            co_await adaptation::async_write(client_socket_, net::buffer(resp), token);
             if (ec && !graceful(ec))
             {
                 throw abnormal::network_error("CONNECT 响应发送失败: {}", ec.message());
@@ -300,7 +301,7 @@ namespace ngx::agent
             const auto data = http::serialize(req, &pool_);
             boost::system::error_code ec;
             auto token = net::redirect_error(net::use_awaitable, ec);
-            co_await net::async_write(*upstream_, net::buffer(data), token);
+            co_await adaptation::async_write(*upstream_, net::buffer(data), token);
             if (ec && !graceful(ec))
             {
                 throw abnormal::network_error("HTTP 请求转发失败: {}", ec.message());
@@ -324,27 +325,28 @@ namespace ngx::agent
 
         /**
          * @details 关键改动：不再使用 `close()` 暴力打断另一个方向的 `co_await`。
-         * 这里使用 `cslot` 给两个方向各自分配一个取消槽：
-         * - `left_to_right` 方向结束（`EOF`/取消/错误）后，触发 `cleft` 方向的取消信号；
-         * - `right_to_left` 方向同理触发 `cright` 方向。
+         * 这里使用 `cancellation_signal` 给两个方向各自分配一个取消槽：
+         * - `left_to_right` 方向结束（`EOF`/取消/错误）后，触发 `right_to_left` 方向的取消信号；
+         * - `right_to_left` 方向同理触发 `left_to_right` 方向。
          * 这样可以区分“正常断开”和“异常错误”，并避免强制关闭导致的误报。
          */
         pool_.release();
 
         auto executor = co_await net::this_coro::executor;
 
-        cslot cleft,cright;
+        cancellation_signal left_to_right_cancel_signal;
+        cancellation_signal right_to_left_cancel_signal;
 
         const std::size_t half = buffer_.size() / 2;
-        auto lbuf = mutable_buf(buffer_.data(), half);
-        auto rbuf = mutable_buf(buffer_.data() + half, buffer_.size() - half);
+        auto left_buffer = mutable_buf(buffer_.data(), half);
+        auto right_buffer = mutable_buf(buffer_.data() + half, buffer_.size() - half);
 
-        auto ltoken = [self = this->shared_from_this(),lslot = cleft.slot(),signal = &cright,lbuf]() 
-            -> net::awaitable<void>
+        auto left_to_right_task = [self = this->shared_from_this(), left_slot = left_to_right_cancel_signal.slot(),
+            signal = &right_to_left_cancel_signal, left_buffer]() -> net::awaitable<void>
         {   // left_to_right
             try
             {
-                co_await self->transfer_tcp(*self->upstream_, self->client_socket_, lslot, lbuf);
+                co_await self->transfer_tcp(self->client_socket_, *self->upstream_, left_slot, left_buffer);
             }
             catch (...)
             {
@@ -355,12 +357,12 @@ namespace ngx::agent
 
         };
 
-        auto rtoken = [self = this->shared_from_this(),rslot = cright.slot(),signal = &cleft,rbuf]() 
-            -> net::awaitable<void>
+        auto right_to_left_task = [self = this->shared_from_this(), right_slot = right_to_left_cancel_signal.slot(),
+            signal = &left_to_right_cancel_signal, right_buffer]() -> net::awaitable<void>
         {   // right_to_left
             try
             {
-                co_await self->transfer_tcp(*self->upstream_, self->client_socket_, rslot, rbuf);
+                co_await self->transfer_tcp(*self->upstream_, self->client_socket_, right_slot, right_buffer);
             }
             catch (...)
             {
@@ -370,8 +372,8 @@ namespace ngx::agent
             signal->emit(net::cancellation_type::all);
         };
 
-        auto lfuture = net::co_spawn(executor,ltoken,net::use_awaitable);
-        auto rfuture = net::co_spawn(executor,rtoken,net::use_awaitable);
+        auto left_to_right_future = net::co_spawn(executor, left_to_right_task, net::use_awaitable);
+        auto right_to_left_future = net::co_spawn(executor, right_to_left_task, net::use_awaitable);
 
         /**
          * @details 到这里两个任务已经并行启动了，下面等待它们完成，如果写在下面的 try-catch 中，
@@ -382,7 +384,7 @@ namespace ngx::agent
         std::exception_ptr first_error; // 创建一个异常指针,用于存储第一个异常
         try
         {
-            co_await std::move(lfuture);
+            co_await std::move(left_to_right_future);
         }
         catch (...)
         {
@@ -391,7 +393,7 @@ namespace ngx::agent
 
         try
         {
-            co_await std::move(rfuture);
+            co_await std::move(right_to_left_future);
         }
         catch (...)
         {
@@ -465,7 +467,7 @@ namespace ngx::agent
      * @details 该函数会从 obscura 协议读取数据，并将数据写入服务器。
      */
     template <socket_concept Transport>
-    net::awaitable<void> session<Transport>::transfer_obscura(obscura<tcp> &proto, const cslot cancel_slot) const
+    net::awaitable<void> session<Transport>::transfer_obscura(obscura<tcp> &proto, const cancellation_slot cancel_slot) const
     {
         beast::flat_buffer buffer;
         while (true)
@@ -495,7 +497,7 @@ namespace ngx::agent
 
             boost::system::error_code ec;
             auto token = net::bind_cancellation_slot(cancel_slot, net::redirect_error(net::use_awaitable, ec));
-            co_await net::async_write(*upstream_, buffer.data(), token);
+            co_await adaptation::async_write(*upstream_, buffer.data(), token);
             if (ec)
             {
                 if (graceful(ec))
@@ -517,7 +519,7 @@ namespace ngx::agent
      * @details 该函数会从服务器读取数据，并将数据写入 obscura 协议实例。
      */
     template <socket_concept Transport>
-    net::awaitable<void> session<Transport>::transfer_obscura(obscura<tcp> &proto, const cslot cancel_slot, mutable_buf buffer) const
+    net::awaitable<void> session<Transport>::transfer_obscura(obscura<tcp> &proto, const cancellation_slot cancel_slot, mutable_buf buffer) const
     {
         boost::system::error_code ec;
         auto token = net::bind_cancellation_slot(cancel_slot, net::redirect_error(net::use_awaitable, ec));
