@@ -1,6 +1,8 @@
 #include <agent.hpp>
 #include <memory>
 #include <thread>
+#include <http.hpp>
+#include <agent.hpp>
 #include <log/monitor.hpp>
 #include <iostream>
 

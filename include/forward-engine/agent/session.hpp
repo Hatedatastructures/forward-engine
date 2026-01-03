@@ -16,6 +16,9 @@
 #include "adaptation.hpp"
 #include <http/deserialization.hpp>
 #include <http/serialization.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
+
+#include <iostream>
 
 namespace ngx::agent
 {
@@ -62,7 +65,7 @@ namespace ngx::agent
          */
         static void session_log(const std::string_view message) noexcept
         {
-            static_cast<void>(message);
+            std::cerr << "[Session Error] " << message << std::endl;
         }
 
         template <typename Socket>
@@ -104,16 +107,16 @@ namespace ngx::agent
          * @brief 从源读取数据并写入目标
          * @param from 源
          * @param to 目标
-         * @param cancel_slot 取消信号槽实例
          * @param buffer 复用缓冲区（必须在 `co_await` 生命周期内保持有效）
          * @details 该函数会从源读取数据，并将数据写入目标。
-         * 该函数不会使用 `close()` 来中断读写，而是依赖 `cancellation_slot` 触发的优雅取消。
+         * 依赖协程的默认取消机制，不需要手动传递 cancellation_slot。
          */
         template <typename Source, typename Dest>
-        net::awaitable<void> transfer_tcp(Source &from, Dest &to, cancellation_slot cancel_slot, mutable_buf buffer)
+        net::awaitable<void> transfer_tcp(Source &from, Dest &to, mutable_buf buffer)
         {
             boost::system::error_code ec;
-            auto token = net::bind_cancellation_slot(cancel_slot, net::redirect_error(net::use_awaitable, ec));
+            // 使用当前协程的默认取消槽，不再需要手动 bind
+            auto token = net::redirect_error(net::use_awaitable, ec);
 
             while (true)
             {
@@ -260,54 +263,80 @@ namespace ngx::agent
     template <socket_concept Transport>
     net::awaitable<void> session<Transport>::handle_http()
     {
-        pool_.release();
-        http::request req(&pool_);
-        const bool success = co_await http::async_read(client_socket_, req, &pool_);
+        beast::flat_buffer read_buffer;
 
-        if (!success)
         {
-            co_return;
-        }
+            pool_.release();
+            http::request req(&pool_);
+            // std::cerr << "[Session] Waiting for HTTP request..." << std::endl;
+            const bool success = co_await http::async_read(client_socket_, req, read_buffer, &pool_);
 
+            if (!success)
+            {
+                // std::cerr << "[Session] HTTP read failed or connection closed." << std::endl;
+                co_return;
+            }
+            // std::cerr << "[Session] HTTP request received: " << req.method_string() << " " << req.target() << std::endl;
 
-        //  连接上游
-        const auto target = analysis::resolve(req);
-        if (target.forward_proxy)
-        {
-            upstream_ = co_await distributor_.route_forward(target.host, target.port);
-        } 
-        else 
-        {
-            upstream_ = co_await distributor_.route_reverse(target.host);
-        }
+            //  连接上游
+            const auto target = analysis::resolve(req);
+            if (target.forward_proxy)
+            {
+                upstream_ = co_await distributor_.route_forward(target.host, target.port);
+            }
+            else
+            {
+                upstream_ = co_await distributor_.route_reverse(target.host);
+            }
+
+            if (!upstream_) 
+            {
+                // std::cerr << "[Session] Failed to route to upstream." << std::endl;
+                co_return;
+            }
+            // std::cerr << "[Session] Upstream connected." << std::endl;
+
+            // 转发
+            if (req.method() == http::verb::connect)
+            {
+                boost::system::error_code ec;
+                auto token = net::redirect_error(net::use_awaitable, ec);
+                const std::string resp = "HTTP/1.1 200 Connection Established\r\n\r\n";
+                co_await adaptation::async_write(client_socket_, net::buffer(resp), token);
+                if (ec && !graceful(ec))
+                {
+                    throw abnormal::network_error("CONNECT 响应发送失败: {}", ec.message());
+                }
+                // std::cerr << "[Session] Sent 200 Connection Established." << std::endl;
+            }
+            else
+            {
+                // 序列化发送
+                const auto data = http::serialize(req, &pool_);
+                boost::system::error_code ec;
+                auto token = net::redirect_error(net::use_awaitable, ec);
+                co_await adaptation::async_write(*upstream_, net::buffer(data), token);
+                if (ec && !graceful(ec))
+                {
+                    throw abnormal::network_error("HTTP 请求转发失败: {}", ec.message());
+                }
+            }
+            
+            if (read_buffer.size() != 0)
+            {
+                // std::cerr << "[Session] Forwarding " << read_buffer.size() << " bytes of prefetched data." << std::endl;
+                boost::system::error_code ec;
+                auto token = net::redirect_error(net::use_awaitable, ec);
+                co_await adaptation::async_write(*upstream_, read_buffer.data(), token);
+                if (ec && !graceful(ec))
+                {
+                    throw abnormal::network_error("预读残留转发失败: {}", ec.message());
+                }
+                read_buffer.consume(read_buffer.size());
+            }
+        } // 限制request 生命周期防止在下面request指向无效的tcp字节流
         
-        if (!upstream_) co_return;
-
-        // 转发
-        if (req.method() == http::verb::connect)
-        {
-            boost::system::error_code ec;
-            auto token = net::redirect_error(net::use_awaitable, ec);
-            const std::string resp = "HTTP/1.1 200 Connection Established\r\n\r\n";
-            co_await adaptation::async_write(client_socket_, net::buffer(resp), token);
-            if (ec && !graceful(ec))
-            {
-                throw abnormal::network_error("CONNECT 响应发送失败: {}", ec.message());
-            }
-        }
-        else
-        {
-            // 序列化发送
-            const auto data = http::serialize(req, &pool_);
-            boost::system::error_code ec;
-            auto token = net::redirect_error(net::use_awaitable, ec);
-            co_await adaptation::async_write(*upstream_, net::buffer(data), token);
-            if (ec && !graceful(ec))
-            {
-                throw abnormal::network_error("HTTP 请求转发失败: {}", ec.message());
-            }
-        }
-
+        // std::cerr << "[Session] Starting tunnel..." << std::endl;
         co_await tunnel();
     }
 
@@ -324,93 +353,52 @@ namespace ngx::agent
         }
 
         /**
-         * @details 关键改动：不再使用 `close()` 暴力打断另一个方向的 `co_await`。
-         * 这里使用 `cancellation_signal` 给两个方向各自分配一个取消槽：
-         * - `left_to_right` 方向结束（`EOF`/取消/错误）后，触发 `right_to_left` 方向的取消信号；
-         * - `right_to_left` 方向同理触发 `left_to_right` 方向。
-         * 这样可以区分“正常断开”和“异常错误”，并避免强制关闭导致的误报。
+         * @details 使用 awaitable_operators 实现双向隧道。
+         * 使用 || 运算符并发执行两个传输任务：
+         * - client -> upstream
+         * - upstream -> client
+         * 当任意一个方向完成（断开连接或发生错误）时，|| 运算符会自动取消另一个方向的任务。
          */
+        using namespace boost::asio::experimental::awaitable_operators;
+
         pool_.release();
-
-        auto executor = co_await net::this_coro::executor;
-
-        cancellation_signal left_to_right_cancel_signal;
-        cancellation_signal right_to_left_cancel_signal;
 
         const std::size_t half = buffer_.size() / 2;
         auto left_buffer = mutable_buf(buffer_.data(), half);
         auto right_buffer = mutable_buf(buffer_.data() + half, buffer_.size() - half);
 
-        auto left_to_right_task = [self = this->shared_from_this(), left_slot = left_to_right_cancel_signal.slot(),
-            signal = &right_to_left_cancel_signal, left_buffer]() -> net::awaitable<void>
-        {   // left_to_right
-            try
-            {
-                co_await self->transfer_tcp(self->client_socket_, *self->upstream_, left_slot, left_buffer);
-            }
-            catch (...)
-            {
-                signal->emit(net::cancellation_type::all);
-                throw;
-            }
-            signal->emit(net::cancellation_type::all);
-
+        auto client_to_upstream = [this, left_buffer]() -> net::awaitable<void>
+        {
+            // std::cerr << "[Session] Tunnel: Client -> Upstream started." << std::endl;
+            co_await transfer_tcp(client_socket_, *upstream_, left_buffer);
+            // std::cerr << "[Session] Tunnel: Client -> Upstream finished." << std::endl;
         };
 
-        auto right_to_left_task = [self = this->shared_from_this(), right_slot = right_to_left_cancel_signal.slot(),
-            signal = &left_to_right_cancel_signal, right_buffer]() -> net::awaitable<void>
-        {   // right_to_left
-            try
-            {
-                co_await self->transfer_tcp(*self->upstream_, self->client_socket_, right_slot, right_buffer);
-            }
-            catch (...)
-            {
-                signal->emit(net::cancellation_type::all);
-                throw;
-            }
-            signal->emit(net::cancellation_type::all);
+        auto upstream_to_client = [this, right_buffer]() -> net::awaitable<void>
+        {
+            // std::cerr << "[Session] Tunnel: Upstream -> Client started." << std::endl;
+            co_await transfer_tcp(*upstream_, client_socket_, right_buffer);
+            // std::cerr << "[Session] Tunnel: Upstream -> Client finished." << std::endl;
         };
-
-        auto left_to_right_future = net::co_spawn(executor, left_to_right_task, net::use_awaitable);
-        auto right_to_left_future = net::co_spawn(executor, right_to_left_task, net::use_awaitable);
-
-        /**
-         * @details 到这里两个任务已经并行启动了，下面等待它们完成，如果写在下面的 try-catch 中，
-         * 则会导致先完成的任务抛出异常，而另一个任务继续运行，这不是期望的行为, try代码块中 move 的是一个可等待对象,
-         * 它会在完成时抛出异常,如果我们不捕获异常,则会导致程序崩溃。
-         */
-
-        std::exception_ptr first_error; // 创建一个异常指针,用于存储第一个异常
-        try
-        {
-            co_await std::move(left_to_right_future);
-        }
-        catch (...)
-        {
-            first_error = std::current_exception();
-        }
 
         try
         {
-            co_await std::move(right_to_left_future);
+            // 并发执行，任一完成即结束
+            co_await (client_to_upstream() || upstream_to_client());
+        }
+        catch (const std::exception &e)
+        {
+            // std::cerr << "[Session] Tunnel error: " << e.what() << std::endl;
+            // 记录错误但继续清理
         }
         catch (...)
         {
-            if (!first_error)
-            {
-                first_error = std::current_exception();
-            }
+            // std::cerr << "[Session] Tunnel unknown error." << std::endl;
         }
 
         shut_close(client_socket_);
         shut_close(upstream_);
         upstream_.reset();
-
-        if (first_error)
-        {   // 如果有异常,则重新抛出
-            std::rethrow_exception(first_error);
-        }
     }
 
     /**

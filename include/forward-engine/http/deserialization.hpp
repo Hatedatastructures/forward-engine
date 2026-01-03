@@ -32,7 +32,8 @@ namespace ngx::http
      * @return true 读取成功, false 读取失败 (连接断开或协议错误)
      */
     template <class Transport>
-    net::awaitable<bool> async_read(Transport &socket, request &request_instance, std::pmr::memory_resource *mr)
+    net::awaitable<bool> async_read(Transport &socket, request &request_instance,
+        boost::beast::flat_buffer &buffer, std::pmr::memory_resource *mr)
     {
         if (!mr)
         {
@@ -45,14 +46,12 @@ namespace ngx::http
         request_parser parser(std::piecewise_construct, std::make_tuple(memory_allocator{mr}));
         parser.get().body() = http_body::value_type(memory_allocator{mr});
 
-        boost::beast::flat_buffer buffer;
-        parser.header_limit(16 * 1024); 
+        parser.header_limit(16 * 1024);
         parser.body_limit(10 * 1024 * 1024);
 
         boost::system::error_code ec;
         auto token = net::redirect_error(net::use_awaitable, ec);
         co_await boost::beast::http::async_read(socket, buffer, parser, token);
-        // 读取完成一个完整的请求窃取到自己的 request 对象
         if (ec)
         {
             co_return false;
@@ -60,7 +59,6 @@ namespace ngx::http
 
         auto beast_msg = parser.release();
 
-        // 填充 request 对象
         request_instance.method(beast_msg.method_string());
         request_instance.target(beast_msg.target());
         request_instance.version(beast_msg.version());
@@ -77,6 +75,13 @@ namespace ngx::http
         request_instance.keep_alive(beast_msg.keep_alive());
 
         co_return true;
+    }
+
+    template <class Transport>
+    net::awaitable<bool> async_read(Transport &socket, request &request_instance, std::pmr::memory_resource *mr)
+    {
+        boost::beast::flat_buffer buffer;
+        co_return co_await async_read(socket, request_instance, buffer, mr);
     }
 
     /**
