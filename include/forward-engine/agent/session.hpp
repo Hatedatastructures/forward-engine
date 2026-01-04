@@ -115,33 +115,35 @@ namespace ngx::agent
         net::awaitable<void> transfer_tcp(Source &from, Dest &to, mutable_buf buffer)
         {
             boost::system::error_code ec;
-            // 使用当前协程的默认取消槽，不再需要手动 bind
             auto token = net::redirect_error(net::use_awaitable, ec);
 
             while (true)
             {
                 ec.clear();
-                const std::size_t n = co_await adaptation::async_read(from, buffer, token);
+                const std::size_t n = co_await from.async_read_some(buffer, token);
                 if (ec)
                 {
                     if (graceful(ec))
-                    {
+                    {   // 对端正常关闭或被取消
+                        shut_close(to);
                         co_return;
                     }
                     throw abnormal::network_error("transfer_tcp 读失败: {}", ec.message());
                 }
 
                 if (n == 0)
-                {
+                {   // 对端正常关闭
+                    shut_close(to);
                     co_return;
                 }
 
                 ec.clear();
-                co_await adaptation::async_write(to, net::buffer(buffer.data(), n), token);
+                co_await net::async_write(to, net::buffer(buffer.data(), n), token);
                 if (ec)
                 {
                     if (graceful(ec))
                     {
+                        shut_close(from);
                         co_return;
                     }
                     throw abnormal::network_error("transfer_tcp 写失败: {}", ec.message());
@@ -152,7 +154,7 @@ namespace ngx::agent
         net::io_context &io_context_;
         std::shared_ptr<ssl::context> ssl_ctx_;
         distributor &distributor_;
-        socket_type client_socket_; // 客户端连接   
+        socket_type client_socket_; // 客户端连接
         internal_ptr upstream_;
 
         std::array<std::byte, 16384> buffer_{};

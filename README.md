@@ -1,4 +1,4 @@
-# forward_engine
+# ForwardEngine
 
 <div align="center">
 
@@ -9,42 +9,42 @@
 
 </div>
 
-**ForwardEngine** 是一个基于 C++20 协程与 Boost.Asio 的代理引擎原型工程，当前重点在于把“接入（accept）→ 协议识别 → 路由 → 上游连接 → 双向转发”的主链路跑通，并提供可演进的模块边界。
+`ForwardEngine` 是一个基于 C++20 协程与 `Boost.Asio/Beast` 的代理引擎原型工程，目标是把“接入（`accept`）→ 协议识别（`peek`）→ 路由 → 上游连接 → 双向转发（隧道）→ 退出与回收”这条主链路跑通，并保持清晰的模块边界以便后续演进。
 
----
+## 核心特性
+- C++20 协程：使用 `net::awaitable` + `co_await` 组织异步流程。
+- 代理会话：支持 HTTP 正向/反向代理的基本链路；支持 `CONNECT` 隧道。
+- 连接复用（TCP）：按目标端点缓存空闲连接，带基础健康检查与上限控制。
+- Obscura 封装：基于 Beast `WebSocket(SSL)` 的传输包装，提供 `handshake/async_read/async_write`。
 
-## 🚀 核心特性
+## 构建环境（Windows 11 + MinGW）
+- 编译器：`MinGW-w64`（支持 C++20）。
+- 构建系统：`CMake 3.15+`。
+- 三方依赖：除标准库外，依赖从 `c:/bin` 查找（根目录 `CMakeLists.txt` 里配置了 `CMAKE_PREFIX_PATH`、`OPENSSL_ROOT_DIR`）。
 
-- **C++20 支持**：使用协程（`co_await`）组织异步流程，减少回调嵌套。
-- **异步 I/O**：基于 Boost.Asio/Beast（Windows 11 + MinGW 为主要构建环境）。
-- **HTTP 请求处理**：提供基础的 HTTP `request/response/header` 模型与序列化/反序列化。
-- **代理会话**：支持 HTTP 正向/反向代理的基本转发链路；支持 CONNECT 隧道转发。
-- **连接复用（当前仅 TCP）**：按目标端点缓存空闲连接，并带基础健康检查（僵尸检测/空闲超时/单端点上限）。
-- **Obscura 封装**：基于 Beast WebSocket（含 SSL）的传输包装，提供 `handshake/async_read/async_write` 等接口。
+建议的依赖清单：
+- `Boost`（Asio、Beast、System 等）。
+- `OpenSSL`。
 
-## 🛠️ 技术栈与依赖
+## 快速上手
+- 可执行入口通常在 `src/forward-engine/*`。
+- 测试在 `test/*`，其中 `session_test` 用于验证：
+  - `CONNECT` 隧道的双向转发是否正确
+  - 一端关闭后，另一端是否能及时收敛退出
 
-本项目依赖以下库（除标准库外）：
+## 目录与模块
+- `include/forward-engine/agent/*`
+  - `worker.hpp`：监听端口、`accept`、创建 `session`
+  - `session.hpp`：会话主链路（协议识别、HTTP/Obscura 处理、隧道与收尾）
+  - `analysis.hpp/.cpp`：协议识别与目标解析
+  - `distributor.hpp/.cpp`：路由与连接获取
+  - `connection.hpp/.cpp`：连接池（`internal_ptr` + `deleter` 回收）
+- `include/forward-engine/http/*`：HTTP 类型与编解码
+- `test/*`：最小集成测试与回归用例
 
-- **[Boost](https://www.boost.org/)** (1.75+): 核心网络与系统库 (Asio, Beast, System)。
-- **[OpenSSL](https://www.openssl.org/)**: 提供 SSL/TLS 加密支持。
-- **CMake** (3.15+): 构建系统。
+## 已知限制
+- 连接池当前仅覆盖 TCP；尚未实现全局 LRU、后台定时清理、跨线程共享/分片池。
+- 反向代理路由表 `reverse_map_` 仍在完善中。
 
-依赖默认从 `c:/bin` 查找（见根 `CMakeLists.txt` 中的 `CMAKE_PREFIX_PATH` 与 `OPENSSL_ROOT_DIR` 配置）。
-
-## 🧱 当前模块边界
-- **Agent**：接入与会话调度（`worker/session/analysis`）。
-- **Distributor**：路由与连接获取（`route_forward/route_reverse/route_direct`）。
-- **Connection Pool**：TCP 连接的获取与回收（`source/internal_ptr/deleter`）。
-- **HTTP**：HTTP 类型与编解码（`include/forward-engine/http/*`）。
-- **Obscura**：WebSocket(SSL) 传输封装（`agent/obscura.hpp`）。
-- **Log**：协程日志输出（`log/monitor.hpp`）。
-
-## ✅ 当前已知限制
-- 连接池目前只覆盖 TCP；尚未实现 UDP 缓存、全局 LRU、后台定时清理、跨线程共享/分片池。
-- 反向代理路由表 `reverse_map_` 目前未接入配置加载。
-- 测试用例中 `connection_test`、`obscura_test` 仍处于未稳定状态（详见 `docs/progress.md`）。
-
-## 📄 许可证
-
-本项目采用 [MIT License](LICENSE) 许可证。
+## 许可证
+本项目采用 [MIT License](LICENSE)。

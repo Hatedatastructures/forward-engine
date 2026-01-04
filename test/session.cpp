@@ -79,7 +79,7 @@ net::awaitable<void> proxy_accept_one(tcp::acceptor acceptor, agent::net::io_con
     if (accept_ec)
     {
         co_return;
-    } // 生命周期问题
+    } 
     std::make_shared<agent::session<tcp::socket>>(ioc, std::move(socket), dist, std::move(ssl_ctx))->start();
 }
 
@@ -128,7 +128,7 @@ net::awaitable<std::string> read_proxy_connect_response(tcp::socket &socket)
  * @param timeout 超时时间
  * @note 超时时间内未发送取消信号，会自动发送取消信号
  */
-net::awaitable<void> emit_cancel_after(net::cancellation_signal &signal, const std::chrono::milliseconds timeout)
+net::awaitable<void> emit_cancel_after(std::shared_ptr<net::cancellation_signal> signal, const std::chrono::milliseconds timeout)
 {   // 获取当前协程的 executor
     net::steady_timer timer(co_await net::this_coro::executor);
     timer.expires_after(timeout);
@@ -138,7 +138,7 @@ net::awaitable<void> emit_cancel_after(net::cancellation_signal &signal, const s
     co_await timer.async_wait(token);
     if (!ec)
     {
-        signal.emit(net::cancellation_type::all);
+        signal->emit(net::cancellation_type::all);
     }
 }
 
@@ -148,13 +148,13 @@ net::awaitable<void> emit_cancel_after(net::cancellation_signal &signal, const s
  * @param timeout 超时时间
  * @note 超时时间内未标志位为 true，会抛出异常
  */
-net::awaitable<void> wait_until_true(const std::atomic_bool &flag, const std::chrono::milliseconds timeout)
+net::awaitable<void> wait_until_true(std::shared_ptr<std::atomic_bool> flag, const std::chrono::milliseconds timeout)
 {
     auto executor = co_await net::this_coro::executor;
     net::steady_timer timer(executor);
 
     const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (!flag.load())
+    while (!flag->load())
     {
         if (std::chrono::steady_clock::now() >= deadline)
         {
@@ -252,9 +252,11 @@ net::awaitable<void> upstream_close_after_accept(tcp::acceptor acceptor, const s
  * @brief 等待 acceptor 接受连接后，等待 peer 关闭连接
  * @param acceptor acceptor (按值传递以接管所有权)
  * @param closed_flag 标志位，peer 关闭连接后会设置为 true
+ * @param timeout 超时时间
  * @note 超时时间内未关闭连接，会自动设置标志位为 true
  */
-net::awaitable<void> upstream_wait_peer_close(tcp::acceptor acceptor, std::atomic_bool &closed_flag)
+net::awaitable<void> upstream_wait_peer_close(tcp::acceptor acceptor, std::shared_ptr<std::atomic_bool> closed_flag,
+    const std::chrono::milliseconds timeout)
 {
     boost::system::error_code accept_ec;
     auto accept_token = net::redirect_error(net::use_awaitable, accept_ec);
@@ -264,17 +266,26 @@ net::awaitable<void> upstream_wait_peer_close(tcp::acceptor acceptor, std::atomi
         co_return;
     }
 
-    net::cancellation_signal timeout_signal;
-    net::co_spawn(co_await net::this_coro::executor,emit_cancel_after(timeout_signal, std::chrono::milliseconds(1500)),
-        net::detached);
+    auto timeout_signal = std::make_shared<net::cancellation_signal>();
+    net::co_spawn(co_await net::this_coro::executor, emit_cancel_after(timeout_signal, timeout), net::detached);
 
     std::array<char, 1> buf{};
     boost::system::error_code ec;
-    auto token = net::bind_cancellation_slot(timeout_signal.slot(), net::redirect_error(net::use_awaitable, ec));
-    const std::size_t n = co_await socket.async_read_some(net::buffer(buf), token);
-    if (n == 0 || (ec && ec != net::error::operation_aborted))
+    auto token = net::bind_cancellation_slot(timeout_signal->slot(), net::redirect_error(net::use_awaitable, ec));
+
+    while (true)
     {
-        closed_flag.store(true);
+        ec.clear();
+        const std::size_t n = co_await socket.async_read_some(net::buffer(buf), token);
+        if (ec == net::error::operation_aborted)
+        {
+            co_return;
+        }
+        if (n == 0 || ec)
+        {
+            closed_flag->store(true);
+            co_return;
+        }
     }
 }
 
@@ -302,14 +313,14 @@ net::awaitable<void> proxy_connect_client_expect_close(const tcp::endpoint proxy
     const std::string first_line = (eol == std::string::npos) ? response : response.substr(0, eol);
     co_await msg.console_write_line(nlog::level::info, std::format("client: CONNECT 响应 `{}`", first_line));
 
-    net::cancellation_signal timeout_signal;
+    auto timeout_signal = std::make_shared<net::cancellation_signal>();
     net::co_spawn(co_await net::this_coro::executor,
         emit_cancel_after(timeout_signal, std::chrono::milliseconds(1500)),
         net::detached);
 
     std::array<char, 1> one{};
     boost::system::error_code ec;
-    auto token = net::bind_cancellation_slot(timeout_signal.slot(), net::redirect_error(net::use_awaitable, ec));
+    auto token = net::bind_cancellation_slot(timeout_signal->slot(), net::redirect_error(net::use_awaitable, ec));
     const std::size_t n = co_await socket.async_read_some(net::buffer(one), token);
 
     if (ec == net::error::operation_aborted)
@@ -432,23 +443,15 @@ net::awaitable<void> run_case_client_close_should_close_upstream(agent::net::io_
     const auto upstream_ep = upstream_acceptor.local_endpoint();
     const auto proxy_ep = proxy_acceptor.local_endpoint();
 
-    std::atomic_bool upstream_closed{false};
+    constexpr auto EXPECTED_SHUTDOWN_TIMEOUT = std::chrono::milliseconds(1500);
+    auto upstream_closed = std::make_shared<std::atomic_bool>(false);
 
-    // 注意：upstream_wait_peer_close 引用了局部变量 upstream_closed。
-    // 由于我们等待 wait_until_true(upstream_closed)，这保证了 upstream_wait_peer_close 
-    // 在函数返回前会完成或被 ioc 停止。但为了安全，acceptor 必须 move。
-    // 另外，upstream_closed 必须在 upstream_wait_peer_close 运行期间有效。
-    // 由于 wait_until_true 会阻塞直到 flag 变 true，这意味着 upstream_wait_peer_close 
-    // 肯定已经运行到了设置 flag 的地方。
-    // 风险点：如果超时抛出异常，函数退出，upstream_closed 销毁，后台协程再写 flag -> 崩。
-    // 但这里我们无法简单 move atomic。只能祈祷测试通过。
-    // 更好的做法是把 atomic 放在 shared_ptr 里。
-    
-    net::co_spawn(ioc, upstream_wait_peer_close(std::move(upstream_acceptor), upstream_closed), net::detached);
+    net::co_spawn(ioc, upstream_wait_peer_close(std::move(upstream_acceptor), upstream_closed, EXPECTED_SHUTDOWN_TIMEOUT),
+        net::detached);
     net::co_spawn(ioc, proxy_accept_one(std::move(proxy_acceptor), ioc, dist, std::move(ssl_ctx)), net::detached);
 
     co_await proxy_connect_client_then_close(proxy_ep, upstream_ep, msg);
-    co_await wait_until_true(upstream_closed, std::chrono::milliseconds(1500));
+    co_await wait_until_true(upstream_closed, EXPECTED_SHUTDOWN_TIMEOUT);
 
     co_await msg.console_write_line(nlog::level::info, "=== case: client_close_should_close_upstream done ===");
 }
@@ -473,35 +476,28 @@ int main()
 #endif
     try
     {
-        // 资源生命周期管理：
-        // 1. pool/dist: 被 session 依赖，必须最后销毁。
-        // 2. ioc: 管理 session，必须在 pool/dist 之前销毁（确保 session 析构时 pool 还在）。
-        // 3. msg: 依赖 ioc，必须在 ioc 之前销毁（确保 msg 析构时 ioc 还在）。
-        
-        std::unique_ptr<agent::source> pool;
-        std::unique_ptr<agent::distributor> dist;
-        std::shared_ptr<ssl::context> ssl_ctx;
-
-        auto ioc_ptr = std::make_unique<agent::net::io_context>();
+        // 1. ioc 必须最先声明（最后析构）
+        // 确保 socket/pool/dist 析构时 ioc 仍然有效
+        const auto ioc_ptr = std::make_unique<agent::net::io_context>();
         auto &ioc = *ioc_ptr;
 
-        // 初始化 pool 和 dist (它们依赖 ioc)
-        pool = std::make_unique<agent::source>(ioc);
-        dist = std::make_unique<agent::distributor>(*pool, ioc);
+        // 2. 依赖资源声明（在 ioc 之后，先析构）
 
-        ssl_ctx = std::make_shared<ssl::context>(ssl::context::tlsv12);
+        // 初始化
+        const auto pool = std::make_unique<agent::source>(ioc);
+        auto dist = std::make_unique<agent::distributor>(*pool, ioc);
+
+        auto ssl_ctx = std::make_shared<ssl::context>(ssl::context::tlsv12);
         ssl_ctx->set_verify_mode(ssl::verify_none);
 
         std::exception_ptr test_error;
 
-        // 使用作用域限制 msg 的生命周期
         {
             nlog::coroutine_log msg(ioc.get_executor());
 
             auto function = [&ioc, &dist, &ssl_ctx, &msg]() -> net::awaitable<void>
             {
                 co_await msg.console_write_line(nlog::level::info, "session_test: start");
-                // 注意：dist 是 unique_ptr，这里解引用传递
                 co_await run_all_tests(ioc, *dist, ssl_ctx, msg);
                 co_await msg.console_write_line(nlog::level::info, "session_test: done");
             };
@@ -513,13 +509,8 @@ int main()
             };
             net::co_spawn(ioc, function(), token);
 
-            std::jthread io_thread([&ioc](){ioc.run();});
+            ioc.run();
         }
-
-        // 显式销毁 ioc，清理 session
-        ioc_ptr.reset();
-
-        // pool 和 dist 将在此之后自动析构
 
         if (test_error)
         {
